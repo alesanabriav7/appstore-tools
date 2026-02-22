@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { readFile } from "node:fs/promises";
+import { readFile, realpath } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
 
 import { AppStoreConnectClient, InfrastructureError } from "./api/client.js";
@@ -414,17 +414,18 @@ function assertNever(value: never): never {
   throw new Error(`Unsupported command payload: ${JSON.stringify(value)}`);
 }
 
-function isExecutedAsScript(): boolean {
+async function isExecutedAsScript(): Promise<boolean> {
   const executedPath = process.argv[1];
 
   if (!executedPath) {
     return false;
   }
 
-  return import.meta.url === pathToFileURL(executedPath).href;
+  const resolvedPath = await realpath(executedPath);
+  return import.meta.url === pathToFileURL(resolvedPath).href;
 }
 
-if (isExecutedAsScript()) {
+if (await isExecutedAsScript()) {
   const exitCode = await runCli(process.argv.slice(2), process.env);
   if (exitCode !== 0) {
     process.exit(exitCode);
