@@ -9,6 +9,7 @@ import {
   type UploadOperation
 } from "../api/types.js";
 import { resolveIpaArtifact, type IpaSource, type ProcessRunner } from "../ipa/artifact.js";
+import { autoDetectIpaSource } from "../ipa/autodetect.js";
 import { verifyIpa } from "../ipa/preflight.js";
 import { listApps, type AppSummary } from "./apps-list.js";
 
@@ -416,41 +417,118 @@ async function pollBuildUploadState(
 export async function buildsUploadCommand(
   client: AppStoreConnectClient,
   command: {
-    readonly appReference: string;
-    readonly version: string;
-    readonly buildNumber: string;
-    readonly ipaSource: IpaSource;
+    readonly appReference?: string;
+    readonly version?: string;
+    readonly buildNumber?: string;
+    readonly ipaSource?: IpaSource;
     readonly waitProcessing: boolean;
     readonly apply: boolean;
     readonly json: boolean;
+  },
+  options?: {
+    readonly cwd?: string;
+    readonly processRunner?: ProcessRunner;
   }
 ): Promise<number> {
-  const apps = await listApps(client);
-  const app = apps.find(
-    (a) => a.id === command.appReference || a.bundleId === command.appReference
-  );
+  const processRunner = options?.processRunner;
+  const ipaSource =
+    command.ipaSource ??
+    (await autoDetectIpaSource({
+      ...(options?.cwd ? { cwd: options.cwd } : {}),
+      ...(processRunner ? { processRunner } : {})
+    }));
+
+  const artifact = await resolveIpaArtifact(ipaSource, processRunner);
+
+  try {
+    const detectedIpaMetadata = await verifyIpa(
+      { ipaPath: artifact.ipaPath },
+      processRunner
+    );
+
+    if (detectedIpaMetadata.errors.length > 0) {
+      throw new DomainError(
+        `IPA preflight verification failed: ${detectedIpaMetadata.errors.join(" | ")}`
+      );
+    }
+
+    const expectedVersion = command.version ?? detectedIpaMetadata.version;
+    if (!expectedVersion) {
+      throw new InfrastructureError(
+        "Could not resolve app version. Provide --version or ensure IPA includes CFBundleShortVersionString."
+      );
+    }
+
+    const expectedBuildNumber = command.buildNumber ?? detectedIpaMetadata.buildNumber;
+    if (!expectedBuildNumber) {
+      throw new InfrastructureError(
+        "Could not resolve build number. Provide --build-number or ensure IPA includes CFBundleVersion."
+      );
+    }
+
+    const apps = await listApps(client);
+    const app = resolveTargetApp(apps, command.appReference, detectedIpaMetadata.bundleId);
+
+    const result = await uploadBuild(
+      client,
+      {
+        ipaSource: { kind: "prebuilt", ipaPath: artifact.ipaPath },
+        appId: app.id,
+        expectedBundleId: app.bundleId,
+        expectedVersion,
+        expectedBuildNumber,
+        waitProcessing: command.waitProcessing,
+        apply: command.apply
+      },
+      processRunner ? { processRunner } : undefined
+    );
+
+    if (command.json) {
+      console.log(JSON.stringify(result, null, 2));
+    } else {
+      printBuildUploadResult(result, app);
+    }
+
+    return 0;
+  } finally {
+    if (artifact.dispose) {
+      await artifact.dispose();
+    }
+  }
+}
+
+function resolveTargetApp(
+  apps: readonly AppSummary[],
+  appReference: string | undefined,
+  detectedBundleId: string | null
+): AppSummary {
+  if (appReference) {
+    const app = apps.find((candidate) => {
+      return candidate.id === appReference || candidate.bundleId === appReference;
+    });
+
+    if (!app) {
+      throw new InfrastructureError(`Could not resolve app reference "${appReference}".`);
+    }
+
+    return app;
+  }
+
+  if (!detectedBundleId) {
+    throw new InfrastructureError(
+      "Could not resolve target app. Provide --app or ensure IPA includes CFBundleIdentifier."
+    );
+  }
+
+  const app = apps.find((candidate) => candidate.bundleId === detectedBundleId);
 
   if (!app) {
-    throw new Error(`Could not resolve app reference "${command.appReference}".`);
+    throw new InfrastructureError(
+      `No App Store Connect app found for bundle identifier "${detectedBundleId}".`
+    );
   }
 
-  const result = await uploadBuild(client, {
-    ipaSource: command.ipaSource,
-    appId: app.id,
-    expectedBundleId: app.bundleId,
-    expectedVersion: command.version,
-    expectedBuildNumber: command.buildNumber,
-    waitProcessing: command.waitProcessing,
-    apply: command.apply
-  });
-
-  if (command.json) {
-    console.log(JSON.stringify(result, null, 2));
-  } else {
-    printBuildUploadResult(result, app);
-  }
-
-  return 0;
+  return app;
 }
 
 function printBuildUploadResult(result: BuildsUploadResult, app: AppSummary): void {
