@@ -2,6 +2,7 @@
 
 import { readFile, realpath } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
+import { config as loadDotenv } from "dotenv";
 
 import { AppStoreConnectClient, InfrastructureError } from "./api/client.js";
 import type { IpaSource } from "./ipa/artifact.js";
@@ -426,6 +427,7 @@ async function isExecutedAsScript(): Promise<boolean> {
 }
 
 if (await isExecutedAsScript()) {
+  loadDotenv();
   const exitCode = await runCli(process.argv.slice(2), process.env);
   if (exitCode !== 0) {
     process.exit(exitCode);

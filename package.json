@@ -39,5 +39,8 @@
   "packageManager": "pnpm@10.29.3",
   "bin": {
     "appstore-tools": "dist/cli.js"
+  },
+  "dependencies": {
+    "dotenv": "^17.3.1"
   }
 }
