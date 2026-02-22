@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -68,6 +68,69 @@ describe("autoDetectIpaSource", () => {
         scheme: "Demo",
         exportOptionsPlist,
         workspacePath
+      });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("parses xcodebuild output with leading warnings before JSON", async () => {
+    const root = await mkdtemp(join(tmpdir(), "asc-autodetect-xcode-noise-"));
+
+    try {
+      const workspacePath = join(root, "Demo.xcworkspace");
+      const exportOptionsPlist = join(root, "ExportOptions.plist");
+      await mkdir(workspacePath);
+      await writeFile(exportOptionsPlist, "<plist></plist>");
+
+      const processRunner: ProcessRunner = {
+        run: async (command, args) => {
+          if (command === "xcodebuild" && args.join(" ") === `-list -json -workspace ${workspacePath}`) {
+            return {
+              stdout: [
+                "xcodebuild: warning: using fallback destination",
+                JSON.stringify({
+                  workspace: { schemes: ["Demo"] }
+                })
+              ].join("\n"),
+              stderr: ""
+            };
+          }
+
+          throw new Error(`Unexpected command: ${command} ${args.join(" ")}`);
+        }
+      };
+
+      const source = await autoDetectIpaSource({
+        cwd: root,
+        processRunner
+      });
+
+      expect(source).toEqual({
+        kind: "xcodebuild",
+        scheme: "Demo",
+        exportOptionsPlist,
+        workspacePath
+      });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("ignores inaccessible ipa candidates while scanning", async () => {
+    const root = await mkdtemp(join(tmpdir(), "asc-autodetect-inaccessible-"));
+
+    try {
+      const validIpa = join(root, "valid.ipa");
+      const brokenIpaSymlink = join(root, "broken.ipa");
+      await writeFile(validIpa, "ipa");
+      await symlink(join(root, "missing-target.ipa"), brokenIpaSymlink);
+
+      const source = await autoDetectIpaSource({ cwd: root });
+
+      expect(source).toEqual({
+        kind: "prebuilt",
+        ipaPath: validIpa
       });
     } finally {
       await rm(root, { recursive: true, force: true });

@@ -113,12 +113,29 @@ async function detectPrebuiltIpa(cwd: string): Promise<string | null> {
     return null;
   }
 
-  const withStats = await Promise.all(
-    ipaFiles.map(async (ipaPath) => ({
-      ipaPath,
-      modifiedAt: (await stat(ipaPath)).mtimeMs
-    }))
-  );
+  const withStats = (
+    await Promise.all(
+      ipaFiles.map(async (ipaPath) => {
+        try {
+          const details = await stat(ipaPath);
+          if (!details.isFile()) {
+            return null;
+          }
+
+          return {
+            ipaPath,
+            modifiedAt: details.mtimeMs
+          };
+        } catch {
+          return null;
+        }
+      })
+    )
+  ).filter((entry): entry is { ipaPath: string; modifiedAt: number } => entry !== null);
+
+  if (withStats.length === 0) {
+    return null;
+  }
 
   withStats.sort((a, b) => b.modifiedAt - a.modifiedAt);
   return withStats[0]?.ipaPath ?? null;
@@ -227,8 +244,17 @@ async function detectScheme(
 }
 
 function parseJsonPayload(stdout: string): XcodeListJsonPayload {
+  const jsonStart = stdout.indexOf("{");
+  const jsonEnd = stdout.lastIndexOf("}");
+
+  if (jsonStart < 0 || jsonEnd < jsonStart) {
+    throw new InfrastructureError("Failed to parse xcodebuild -list -json output.");
+  }
+
+  const jsonCandidate = stdout.slice(jsonStart, jsonEnd + 1);
+
   try {
-    return JSON.parse(stdout) as XcodeListJsonPayload;
+    return JSON.parse(jsonCandidate) as XcodeListJsonPayload;
   } catch (error) {
     throw new InfrastructureError("Failed to parse xcodebuild -list -json output.", error);
   }

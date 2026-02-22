@@ -431,12 +431,34 @@ export async function buildsUploadCommand(
   }
 ): Promise<number> {
   const processRunner = options?.processRunner;
+  const uploadOptions = processRunner ? { processRunner } : undefined;
   const ipaSource =
     command.ipaSource ??
     (await autoDetectIpaSource({
       ...(options?.cwd ? { cwd: options.cwd } : {}),
       ...(processRunner ? { processRunner } : {})
     }));
+
+  if (command.appReference && command.version && command.buildNumber) {
+    const apps = await listApps(client);
+    const app = resolveTargetApp(apps, command.appReference, null);
+
+    const result = await uploadBuild(
+      client,
+      {
+        ipaSource,
+        appId: app.id,
+        expectedBundleId: app.bundleId,
+        expectedVersion: command.version,
+        expectedBuildNumber: command.buildNumber,
+        waitProcessing: command.waitProcessing,
+        apply: command.apply
+      },
+      uploadOptions
+    );
+
+    return printBuildUploadCommandOutput(command.json, result, app);
+  }
 
   const artifact = await resolveIpaArtifact(ipaSource, processRunner);
 
@@ -480,16 +502,9 @@ export async function buildsUploadCommand(
         waitProcessing: command.waitProcessing,
         apply: command.apply
       },
-      processRunner ? { processRunner } : undefined
+      uploadOptions
     );
-
-    if (command.json) {
-      console.log(JSON.stringify(result, null, 2));
-    } else {
-      printBuildUploadResult(result, app);
-    }
-
-    return 0;
+    return printBuildUploadCommandOutput(command.json, result, app);
   } finally {
     if (artifact.dispose) {
       await artifact.dispose();
@@ -529,6 +544,20 @@ function resolveTargetApp(
   }
 
   return app;
+}
+
+function printBuildUploadCommandOutput(
+  json: boolean,
+  result: BuildsUploadResult,
+  app: AppSummary
+): number {
+  if (json) {
+    console.log(JSON.stringify(result, null, 2));
+    return 0;
+  }
+
+  printBuildUploadResult(result, app);
+  return 0;
 }
 
 function printBuildUploadResult(result: BuildsUploadResult, app: AppSummary): void {
