@@ -54,6 +54,27 @@ ASC_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----"
 
 ## Usage
 
+Run commands from your iOS app folder (the folder that contains your app files).
+
+Example:
+
+```bash
+cd /path/to/YourApp
+```
+
+If you use Tuist and only have `Project.swift`, generate the workspace/project first:
+
+```bash
+tuist generate
+```
+
+Recommended daily flow (inside the app folder):
+
+```bash
+npx appstore-tools ipa generate
+npx appstore-tools builds upload --apply
+```
+
 ### List apps
 
 ```bash
@@ -70,7 +91,21 @@ npx appstore-tools apps list --json
 
 No credentials required.
 
-From xcodebuild:
+Default (no flags):
+
+```bash
+npx appstore-tools ipa generate
+```
+
+This works when the current folder has an iOS project context (`.xcworkspace` or `.xcodeproj`) and an `ExportOptions.plist`.
+
+Optional override (only if needed):
+
+```bash
+npx appstore-tools ipa generate --output-ipa ./dist/MyApp.ipa
+```
+
+If auto-detection is ambiguous, use explicit xcodebuild flags:
 
 ```bash
 npx appstore-tools ipa generate \
@@ -80,7 +115,7 @@ npx appstore-tools ipa generate \
   --export-options-plist ./ExportOptions.plist
 ```
 
-From a custom command:
+If your project uses a custom build script, use custom mode:
 
 ```bash
 npx appstore-tools ipa generate \
@@ -89,9 +124,41 @@ npx appstore-tools ipa generate \
   --generated-ipa-path ./build/MyApp.ipa
 ```
 
+Auto mode for `ipa generate` infers:
+
+1. workspace/project from local `.xcworkspace` / `.xcodeproj` (including Tuist-generated projects)
+2. `ExportOptions.plist` from local files
+3. scheme from `xcodebuild -list -json`
+4. output path as `./dist/<scheme>.ipa` when omitted
+
 ### Upload build
 
-Dry-run by default — verifies the IPA locally without uploading:
+Dry-run by default (no mutations):
+
+```bash
+npx appstore-tools builds upload
+```
+
+Upload (real apply):
+
+```bash
+npx appstore-tools builds upload --apply
+```
+
+Wait until processing finishes:
+
+```bash
+npx appstore-tools builds upload --apply --wait-processing
+```
+
+Auto mode resolves:
+
+- app from `CFBundleIdentifier`
+- version from `CFBundleShortVersionString`
+- build number from `CFBundleVersion`
+- IPA source from newest local `.ipa`, or from project build context (`.xcworkspace` / `.xcodeproj` + `ExportOptions.plist` + scheme)
+
+Optional overrides (only if needed):
 
 ```bash
 npx appstore-tools builds upload \
@@ -101,18 +168,7 @@ npx appstore-tools builds upload \
   --ipa ./dist/MyApp.ipa
 ```
 
-Add `--apply` to upload, `--wait-processing` to poll until done:
-
-```bash
-npx appstore-tools builds upload \
-  --app com.example.myapp \
-  --version 1.2.3 \
-  --build-number 45 \
-  --ipa ./dist/MyApp.ipa \
-  --apply --wait-processing
-```
-
-Build and upload in one step (xcodebuild mode):
+Explicit xcodebuild mode (if auto-detection is ambiguous):
 
 ```bash
 npx appstore-tools builds upload \

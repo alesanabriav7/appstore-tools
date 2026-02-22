@@ -108,6 +108,17 @@ describe("parseCliCommand", () => {
     });
   });
 
+  it("parses builds upload command with auto-detection enabled", () => {
+    const command = parseCliCommand(["builds", "upload", "--apply"]);
+
+    expect(command).toEqual({
+      kind: "builds-upload",
+      waitProcessing: false,
+      apply: true,
+      json: false
+    });
+  });
+
   it("throws when ipa and generation flags are mixed", () => {
     expect(() =>
       parseCliCommand([
@@ -176,6 +187,15 @@ describe("parseCliCommand", () => {
         generatedIpaPath: "./build/Demo.ipa",
         outputIpaPath: "./dist/Demo.ipa"
       }
+    });
+  });
+
+  it("parses ipa generate command with auto-detection enabled", () => {
+    const command = parseCliCommand(["ipa", "generate"]);
+
+    expect(command).toEqual({
+      kind: "ipa-generate",
+      json: false
     });
   });
 });

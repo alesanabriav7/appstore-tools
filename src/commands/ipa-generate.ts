@@ -1,12 +1,25 @@
 import { resolveIpaArtifact, type IpaSource } from "../ipa/artifact.js";
+import {
+  autoDetectIpaGenerateSource,
+  createDefaultOutputIpaPath
+} from "../ipa/autodetect.js";
 import { verifyIpa } from "../ipa/preflight.js";
 
 export async function ipaGenerateCommand(command: {
-  readonly outputIpaPath: string;
-  readonly ipaSource: Exclude<IpaSource, { kind: "prebuilt" }>;
+  readonly outputIpaPath?: string;
+  readonly ipaSource?: Exclude<IpaSource, { kind: "prebuilt" }>;
   readonly json: boolean;
 }): Promise<number> {
-  const artifact = await resolveIpaArtifact(command.ipaSource);
+  const cwd = process.cwd();
+  const resolvedSource =
+    command.ipaSource ?? (await autoDetectIpaGenerateSource({ cwd }));
+  const outputIpaPath = command.outputIpaPath ?? createDefaultOutputIpaPath(resolvedSource, cwd);
+  const sourceWithOutputPath: Exclude<IpaSource, { kind: "prebuilt" }> = {
+    ...resolvedSource,
+    outputIpaPath
+  };
+
+  const artifact = await resolveIpaArtifact(sourceWithOutputPath);
 
   try {
     const report = await verifyIpa({ ipaPath: artifact.ipaPath });
@@ -15,7 +28,7 @@ export async function ipaGenerateCommand(command: {
       console.log(
         JSON.stringify(
           {
-            outputIpaPath: command.outputIpaPath,
+            outputIpaPath,
             report
           },
           null,
@@ -23,7 +36,7 @@ export async function ipaGenerateCommand(command: {
         )
       );
     } else {
-      console.log(`Generated IPA: ${command.outputIpaPath}`);
+      console.log(`Generated IPA: ${outputIpaPath}`);
       console.log(`Bundle ID: ${report.bundleId ?? "unknown"}`);
       console.log(`Version: ${report.version ?? "unknown"} (${report.buildNumber ?? "unknown"})`);
       console.log(`SHA-256: ${report.sha256 ?? "unavailable"}`);

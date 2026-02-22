@@ -95,8 +95,8 @@ export interface AppsListCliCommand {
 export interface IpaGenerateCliCommand {
   readonly kind: "ipa-generate";
   readonly json: boolean;
-  readonly outputIpaPath: string;
-  readonly ipaSource: Exclude<IpaSource, { kind: "prebuilt" }>;
+  readonly outputIpaPath?: string;
+  readonly ipaSource?: Exclude<IpaSource, { kind: "prebuilt" }>;
 }
 
 export interface BuildsUploadCliCommand {
@@ -104,10 +104,10 @@ export interface BuildsUploadCliCommand {
   readonly json: boolean;
   readonly apply: boolean;
   readonly waitProcessing: boolean;
-  readonly appReference: string;
-  readonly version: string;
-  readonly buildNumber: string;
-  readonly ipaSource: IpaSource;
+  readonly appReference?: string;
+  readonly version?: string;
+  readonly buildNumber?: string;
+  readonly ipaSource?: IpaSource;
 }
 
 export interface HelpCliCommand {
@@ -150,40 +150,44 @@ export function parseCliCommand(argv: readonly string[]): CliCommand {
 }
 
 function parseBuildsUploadCommand(flags: ParsedFlags): BuildsUploadCliCommand {
-  const appReference = requireFlag(flags, "app");
-  const version = requireFlag(flags, "version");
-  const buildNumber = requireFlag(flags, "build-number");
-  const ipaSource = parseIpaSource(flags, false);
+  const appReference = normalizeOptionalFlag(flags.values.app);
+  const version = normalizeOptionalFlag(flags.values.version);
+  const buildNumber = normalizeOptionalFlag(flags.values["build-number"]);
+  const ipaSource = parseIpaSource(flags, false, { allowNone: true });
 
   return {
     kind: "builds-upload",
     json: flags.booleans.has("json"),
     apply: flags.booleans.has("apply"),
     waitProcessing: flags.booleans.has("wait-processing"),
-    appReference,
-    version,
-    buildNumber,
-    ipaSource
+    ...(appReference ? { appReference } : {}),
+    ...(version ? { version } : {}),
+    ...(buildNumber ? { buildNumber } : {}),
+    ...(ipaSource ? { ipaSource } : {})
   };
 }
 
 function parseIpaGenerateCommand(flags: ParsedFlags): IpaGenerateCliCommand {
-  const outputIpaPath = requireFlag(flags, "output-ipa");
-  const ipaSource = parseIpaSource(flags, true);
+  const outputIpaPath = normalizeOptionalFlag(flags.values["output-ipa"]);
+  const ipaSource = parseIpaSource(flags, true, { allowNone: true });
 
-  if (ipaSource.kind === "prebuilt") {
+  if (ipaSource?.kind === "prebuilt") {
     throw new InfrastructureError("ipa generate does not support --ipa prebuilt input.");
   }
 
   return {
     kind: "ipa-generate",
     json: flags.booleans.has("json"),
-    outputIpaPath,
-    ipaSource
+    ...(outputIpaPath ? { outputIpaPath } : {}),
+    ...(ipaSource ? { ipaSource } : {})
   };
 }
 
-function parseIpaSource(flags: ParsedFlags, isGenerateCommand: boolean): IpaSource {
+function parseIpaSource(
+  flags: ParsedFlags,
+  isGenerateCommand: boolean,
+  options: { readonly allowNone?: boolean } = {}
+): IpaSource | undefined {
   const ipaPath = flags.values.ipa;
   const hasIpa = Boolean(ipaPath);
 
@@ -207,6 +211,10 @@ function parseIpaSource(flags: ParsedFlags, isGenerateCommand: boolean): IpaSour
   const sourceModes = [hasIpa, hasCustomCommandInputs, hasXcodebuildInputs].filter(Boolean)
     .length;
 
+  if (sourceModes === 0 && options.allowNone) {
+    return undefined;
+  }
+
   if (sourceModes !== 1) {
     throw new InfrastructureError(
       "Exactly one IPA source mode is required: --ipa, xcodebuild options, or custom command options."
@@ -229,7 +237,7 @@ function parseIpaSource(flags: ParsedFlags, isGenerateCommand: boolean): IpaSour
   if (hasCustomCommandInputs) {
     const buildCommand = requireFlag(flags, "build-command");
     const generatedIpaPath = requireFlag(flags, "generated-ipa-path");
-    const outputIpaPath = isGenerateCommand ? requireFlag(flags, "output-ipa") : null;
+    const outputIpaPath = isGenerateCommand ? normalizeOptionalFlag(flags.values["output-ipa"]) : null;
 
     return {
       kind: "customCommand",
@@ -248,9 +256,7 @@ function parseIpaSource(flags: ParsedFlags, isGenerateCommand: boolean): IpaSour
     );
   }
 
-  const outputIpaPath = isGenerateCommand
-    ? requireFlag(flags, "output-ipa")
-    : flags.values["output-ipa"];
+  const outputIpaPath = normalizeOptionalFlag(flags.values["output-ipa"]);
 
   return {
     kind: "xcodebuild",
@@ -326,6 +332,15 @@ function requireFlag(flags: ParsedFlags, name: string): string {
   return value;
 }
 
+function normalizeOptionalFlag(value: string | undefined): string | undefined {
+  if (!value) {
+    return undefined;
+  }
+
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
 // ---------------------------------------------------------------------------
 // CLI options
 // ---------------------------------------------------------------------------
@@ -340,8 +355,8 @@ function printHelp(): void {
 Usage:
   appstore-tools --help
   appstore-tools apps list [--json]
-  appstore-tools ipa generate --output-ipa <path> [xcodebuild/custom options] [--json]
-  appstore-tools builds upload --app <appId|bundleId> --version <x.y.z> --build-number <n> (--ipa <path> | [generation options]) [--wait-processing] [--json] [--apply]
+  appstore-tools ipa generate [--output-ipa <path>] [xcodebuild/custom options] [--json]
+  appstore-tools builds upload [--app <appId|bundleId>] [--version <x.y.z>] [--build-number <n>] [--ipa <path> | generation options] [--wait-processing] [--json] [--apply]
 
 Required environment variables:
   ASC_ISSUER_ID
@@ -357,6 +372,14 @@ Generation options (xcodebuild mode):
 
 Generation options (custom mode):
   --build-command "<shell command>" --generated-ipa-path <path> [--output-ipa <path>]
+
+builds upload auto-detection:
+  If omitted, --app/--version/--build-number are inferred from IPA metadata.
+  If no IPA source is provided, the CLI tries local .ipa files first, then xcodebuild project discovery.
+
+ipa generate auto-detection:
+  If no source options are provided, the CLI infers xcodebuild inputs from local project files.
+  If --output-ipa is omitted, output defaults to ./dist/<scheme>.ipa.
 `);
 }
 
