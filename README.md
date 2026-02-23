@@ -185,6 +185,7 @@ Defaults:
 - common name: `CLI Certificate`
 - output directory: `./dist/certificates`
 - installation target: `~/Library/Keychains/login.keychain-db`
+- keychain import access: `security import ... -A` to avoid interactive prompts in CI/CD
 
 Optional flags:
 

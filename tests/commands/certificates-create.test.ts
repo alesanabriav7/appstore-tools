@@ -150,6 +150,8 @@ describe("certificatesCreateCommand", () => {
 
       const securityCalls = processCalls.filter((call) => call.command === "security");
       expect(securityCalls).toHaveLength(2);
+      expect(securityCalls[0]?.args).toContain("-A");
+      expect(securityCalls[1]?.args).toContain("-A");
     } finally {
       await rm(outputDirectory, { recursive: true, force: true });
     }

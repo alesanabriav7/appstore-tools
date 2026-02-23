@@ -57,6 +57,7 @@ const DEFAULT_CERTIFICATE_TYPE = "IOS_DISTRIBUTION";
 const DEFAULT_COMMON_NAME = "CLI Certificate";
 const DEFAULT_OUTPUT_DIR = "./dist/certificates";
 const DEFAULT_LOGIN_KEYCHAIN_PATH = path.join(homedir(), "Library/Keychains/login.keychain-db");
+const KEYCHAIN_ACCESS_FLAGS = ["-A"] as const;
 
 export async function certificatesCreateCommand(
   client: AppStoreConnectClient,
@@ -119,8 +120,20 @@ export async function certificatesCreateCommand(
     await writeFile(certificatePath, certificateBytes);
 
     if (!command.skipInstall) {
-      await processRunner.run("security", ["import", certificatePath, "-k", keychainPath]);
-      await processRunner.run("security", ["import", keyPath, "-k", keychainPath]);
+      await processRunner.run("security", [
+        "import",
+        certificatePath,
+        "-k",
+        keychainPath,
+        ...KEYCHAIN_ACCESS_FLAGS
+      ]);
+      await processRunner.run("security", [
+        "import",
+        keyPath,
+        "-k",
+        keychainPath,
+        ...KEYCHAIN_ACCESS_FLAGS
+      ]);
     }
 
     const result: CertificatesCreateResult = {
