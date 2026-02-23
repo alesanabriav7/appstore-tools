@@ -68,6 +68,8 @@ ASC_TEAM_ID=ABCDE12345
 
 `ASC_BASE_URL` is optional and defaults to `https://api.appstoreconnect.apple.com/`.
 
+Note: creating certificates requires an App Store Connect API key with `Admin` permissions.
+
 ## Usage
 
 Run commands from your iOS app folder (the folder that contains your app files).
@@ -167,6 +169,33 @@ npx appstore-tools ipa export-options \
   --output-plist ./config/ExportOptions.plist \
   --signing-style manual \
   --force
+```
+
+### Create ASC signing certificate
+
+Create a certificate in App Store Connect and install it into your login keychain:
+
+```bash
+npx appstore-tools certificates create
+```
+
+Defaults:
+
+- certificate type: `IOS_DISTRIBUTION`
+- common name: `CLI Certificate`
+- output directory: `./dist/certificates`
+- installation target: `~/Library/Keychains/login.keychain-db`
+
+Optional flags:
+
+```bash
+npx appstore-tools certificates create \
+  --type IOS_DEVELOPMENT \
+  --common-name "CI Signing Certificate" \
+  --output-dir ./certs \
+  --keychain ~/Library/Keychains/login.keychain-db \
+  --skip-install \
+  --json
 ```
 
 ### Upload build
@@ -276,6 +305,7 @@ src/
   commands/
     apps-list.ts     # apps list command
     builds-upload.ts # builds upload command
+    certificates-create.ts # certificate create command
     ipa-generate.ts  # ipa generate command
   ipa/
     artifact.ts      # IPA resolution (prebuilt/xcodebuild/custom)

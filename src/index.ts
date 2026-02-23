@@ -30,6 +30,10 @@ export {
   type BuildsUploadResult
 } from "./commands/builds-upload.js";
 export {
+  certificatesCreateCommand,
+  type CertificatesCreateCommandInput
+} from "./commands/certificates-create.js";
+export {
   ipaExportOptionsCommand,
   type IpaExportOptionsCommandInput
 } from "./commands/ipa-export-options.js";
@@ -60,6 +64,7 @@ export {
   type AppsListCliCommand,
   type BuildsUploadCliCommand,
   type CliCommand,
+  type CertificatesCreateCliCommand,
   type HelpCliCommand,
   type IpaExportOptionsCliCommand,
   type IpaGenerateCliCommand

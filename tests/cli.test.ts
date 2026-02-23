@@ -274,4 +274,41 @@ describe("parseCliCommand", () => {
       ])
     ).toThrowError(InfrastructureError);
   });
+
+  it("parses certificates create command with defaults", () => {
+    const command = parseCliCommand(["certificates", "create"]);
+
+    expect(command).toEqual({
+      kind: "certificates-create",
+      json: false,
+      skipInstall: false
+    });
+  });
+
+  it("parses certificates create command with explicit options", () => {
+    const command = parseCliCommand([
+      "certificates",
+      "create",
+      "--type",
+      "IOS_DEVELOPMENT",
+      "--common-name",
+      "CI Certificate",
+      "--output-dir",
+      "./certs",
+      "--keychain",
+      "~/Library/Keychains/login.keychain-db",
+      "--skip-install",
+      "--json"
+    ]);
+
+    expect(command).toEqual({
+      kind: "certificates-create",
+      certificateType: "IOS_DEVELOPMENT",
+      commonName: "CI Certificate",
+      outputDir: "./certs",
+      keychainPath: "~/Library/Keychains/login.keychain-db",
+      skipInstall: true,
+      json: true
+    });
+  });
 });
