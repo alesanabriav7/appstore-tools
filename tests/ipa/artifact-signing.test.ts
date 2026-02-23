@@ -112,7 +112,7 @@ describe("resolveIpaArtifact (xcodebuild signing)", () => {
     );
   });
 
-  it("uses ASC_KEY_PATH and includes required archive signing flags", async () => {
+  it("uses ASC_KEY_PATH, infers ASC_KEY_ID from filename, and includes required archive signing flags", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "asc-artifact-signing-path-"));
     createdPaths.push(root);
 
@@ -122,7 +122,6 @@ describe("resolveIpaArtifact (xcodebuild signing)", () => {
     const { source, exportOptionsPlistPath, outputIpaPath } = await createXcodebuildSource(root);
     const { runner, calls } = createRunner();
 
-    vi.stubEnv("ASC_KEY_ID", "KEY_PATH_MODE");
     vi.stubEnv("ASC_ISSUER_ID", "ISSUER_PATH_MODE");
     vi.stubEnv("ASC_KEY_PATH", keyPath);
 
@@ -137,7 +136,7 @@ describe("resolveIpaArtifact (xcodebuild signing)", () => {
     expect(archiveArgs).toContain("-authenticationKeyPath");
     expect(archiveArgs).toContain(path.resolve(keyPath));
     expect(archiveArgs).toContain("-authenticationKeyID");
-    expect(archiveArgs).toContain("KEY_PATH_MODE");
+    expect(archiveArgs).toContain("TEST");
     expect(archiveArgs).toContain("-authenticationKeyIssuerID");
     expect(archiveArgs).toContain("ISSUER_PATH_MODE");
 

@@ -46,6 +46,16 @@ describe("resolveCliEnvironment", () => {
     expect(env.privateKey).toBe("-----BEGIN PRIVATE KEY-----\ntest-key\n-----END PRIVATE KEY-----");
   });
 
+  it("infers ASC_KEY_ID from ASC_PRIVATE_KEY_PATH when missing", async () => {
+    const env = await resolveCliEnvironment({
+      ASC_ISSUER_ID: "issuer",
+      ASC_PRIVATE_KEY_PATH: keyFilePath
+    });
+
+    expect(env.keyId).toBe("TEST");
+    expect(env.privateKey).toBe("-----BEGIN PRIVATE KEY-----\ntest-key\n-----END PRIVATE KEY-----");
+  });
+
   it("prefers ASC_PRIVATE_KEY_PATH over ASC_PRIVATE_KEY", async () => {
     const env = await resolveCliEnvironment({
       ASC_ISSUER_ID: "issuer",

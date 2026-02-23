@@ -6,6 +6,7 @@ import { config as loadDotenv } from "dotenv";
 
 import { AppStoreConnectClient, InfrastructureError } from "./api/client.js";
 import type { IpaSource } from "./ipa/artifact.js";
+import { resolveAscKeyIdFromEnvironment } from "./asc/key-id.js";
 import { appsListCommand } from "./commands/apps-list.js";
 import { buildsUploadCommand } from "./commands/builds-upload.js";
 import { ipaExportOptionsCommand } from "./commands/ipa-export-options.js";
@@ -26,7 +27,7 @@ const DEFAULT_BASE_URL = "https://api.appstoreconnect.apple.com/";
 
 export async function resolveCliEnvironment(env: NodeJS.ProcessEnv): Promise<CliEnvironment> {
   const issuerId = env.ASC_ISSUER_ID?.trim();
-  const keyId = env.ASC_KEY_ID?.trim();
+  const keyId = await resolveAscKeyIdFromEnvironment(env);
   const privateKeyPath = env.ASC_PRIVATE_KEY_PATH?.trim();
   const privateKeyRaw = env.ASC_PRIVATE_KEY?.trim();
   const baseUrl = env.ASC_BASE_URL?.trim() || DEFAULT_BASE_URL;
@@ -399,7 +400,7 @@ Usage:
 
 Required environment variables (App Store Connect API commands):
   ASC_ISSUER_ID
-  ASC_KEY_ID
+  ASC_KEY_ID (or infer from AuthKey_<KEY_ID>.p8)
   ASC_PRIVATE_KEY or ASC_PRIVATE_KEY_PATH
 
 Optional environment variables:
@@ -407,7 +408,7 @@ Optional environment variables:
 
 Required environment variables (xcodebuild archive signing):
   ASC_ISSUER_ID
-  ASC_KEY_ID
+  ASC_KEY_ID (or infer from AuthKey_<KEY_ID>.p8)
   ASC_KEY_PATH or ASC_KEY_CONTENT (base64)
 
 Optional environment variables (xcodebuild archive signing):

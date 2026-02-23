@@ -38,6 +38,8 @@ ASC_ISSUER_ID=your-issuer-id
 ASC_KEY_ID=your-key-id
 ```
 
+`ASC_KEY_ID` is auto-inferred when the key file name matches `AuthKey_<KEY_ID>.p8` (for example via `ASC_PRIVATE_KEY_PATH` or `ASC_KEY_PATH`).
+
 For API commands (`apps list`, App Store Connect requests in `builds upload`), provide JWT private key:
 
 ```env
