@@ -12,7 +12,7 @@ import { resolveIpaArtifact, type IpaSource, type ProcessRunner } from "../ipa/a
 import { autoDetectIpaSource } from "../ipa/autodetect.js";
 import { verifyIpa } from "../ipa/preflight.js";
 import {
-  uploadWithXcrunFallback,
+  uploadWithXcrunAltool,
   type FallbackUploadCredentials,
   type FallbackUploadMethod
 } from "../ipa/upload-fallback.js";
@@ -317,6 +317,7 @@ export interface BuildsUploadResult {
   readonly buildUploadId: string | null;
   readonly finalBuildUploadState: string | null;
   readonly fallbackUploadMethod?: FallbackUploadMethod;
+  readonly fallbackStatusNote?: string;
 }
 
 const DEFAULT_POLL_INTERVAL_MS = 3_000;
@@ -360,14 +361,15 @@ export async function uploadBuild(
     }
 
     const plannedOperations = [
+      "Upload IPA using xcrun altool",
+      "Fallback to App Store Connect upload operations if altool fails",
       `Create build upload for app ${input.appId}`,
       `Create build upload file for ${artifact.ipaPath}`,
       "Upload chunks using App Store Connect upload operations",
       "Mark build upload file as uploaded with checksums",
-      "Fallback to xcrun altool/Transporter if checksum marking is rejected",
       input.waitProcessing
-        ? "Poll build upload until terminal state"
-        : "Fetch current build upload state once"
+        ? "Poll build upload until terminal state (API fallback path)"
+        : "Fetch current build upload state once (API fallback path)"
     ] as const;
 
     if (!input.apply) {
@@ -378,6 +380,29 @@ export async function uploadBuild(
         buildUploadId: null,
         finalBuildUploadState: null
       };
+    }
+
+    try {
+      const altoolUpload = await uploadWithXcrunAltool(artifact.ipaPath, {
+        ...(options?.processRunner ? { processRunner: options.processRunner } : {}),
+        ...(options?.fallbackUploadCredentials
+          ? { credentials: options.fallbackUploadCredentials }
+          : {}),
+        ...(options?.fallbackEnv ? { env: options.fallbackEnv } : {}),
+        waitForProcessing: input.waitProcessing
+      });
+
+      return {
+        mode: "applied",
+        preflightReport,
+        plannedOperations,
+        buildUploadId: null,
+        finalBuildUploadState: altoolUpload.waitApplied
+          ? "ALTOOL_WAIT_COMPLETED"
+          : "ALTOOL_SUBMITTED"
+      };
+    } catch {
+      // Fall through to API-based upload flow.
     }
 
     const buildUpload = await createBuildUpload(client, {
@@ -408,8 +433,6 @@ export async function uploadBuild(
       );
     }
 
-    let fallbackUploadMethod: FallbackUploadMethod | undefined;
-
     try {
       await markBuildUploadFileUploaded(client, {
         buildUploadFileId: buildUploadFile.id,
@@ -421,22 +444,16 @@ export async function uploadBuild(
         throw error;
       }
 
-      fallbackUploadMethod = await uploadWithXcrunFallback(artifact.ipaPath, {
-        ...(options?.processRunner ? { processRunner: options.processRunner } : {}),
-        ...(options?.fallbackUploadCredentials
-          ? { credentials: options.fallbackUploadCredentials }
-          : {}),
-        ...(options?.fallbackEnv ? { env: options.fallbackEnv } : {})
-      });
+      throw new DomainError(
+        "App Store Connect API fallback rejected sourceFileChecksums while marking build upload file."
+      );
     }
 
-    const finalState = fallbackUploadMethod
-      ? "FALLBACK_SUBMITTED"
-      : input.waitProcessing
-        ? await pollBuildUploadState(client, buildUpload.id, sleep, pollIntervalMs, pollTimeoutMs)
-        : (await getBuildUpload(client, buildUpload.id)).state.state;
+    const finalState = input.waitProcessing
+      ? await pollBuildUploadState(client, buildUpload.id, sleep, pollIntervalMs, pollTimeoutMs)
+      : (await getBuildUpload(client, buildUpload.id)).state.state;
 
-    if (!fallbackUploadMethod && finalState === "FAILED") {
+    if (finalState === "FAILED") {
       throw new DomainError("Build upload failed in App Store Connect.");
     }
 
@@ -444,9 +461,9 @@ export async function uploadBuild(
       mode: "applied",
       preflightReport,
       plannedOperations,
-      buildUploadId: fallbackUploadMethod ? null : buildUpload.id,
+      buildUploadId: buildUpload.id,
       finalBuildUploadState: finalState,
-      ...(fallbackUploadMethod ? { fallbackUploadMethod } : {})
+      fallbackUploadMethod: "App Store Connect API"
     };
   } finally {
     if (artifact.dispose) {
@@ -650,6 +667,9 @@ function printBuildUploadResult(result: BuildsUploadResult, app: AppSummary): vo
     console.log(`Final state: ${result.finalBuildUploadState}`);
     if (result.fallbackUploadMethod) {
       console.log(`Fallback upload method: ${result.fallbackUploadMethod}`);
+    }
+    if (result.fallbackStatusNote) {
+      console.log(`Fallback status note: ${result.fallbackStatusNote}`);
     }
   }
 }

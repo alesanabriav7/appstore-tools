@@ -258,7 +258,7 @@ Every upload runs these checks before touching App Store Connect:
 - Code signing is valid (`codesign --verify --strict --deep`)
 - SHA-256 and MD5 checksums computed
 
-If App Store Connect rejects `sourceFileChecksums` during the "mark uploaded" step (HTTP 409), the CLI automatically retries upload submission using `xcrun altool`, then `xcrun iTMSTransporter` as a secondary fallback.
+The CLI now attempts upload with `xcrun altool` first. If that primary upload fails (for example, missing local Xcode tooling/credentials), it automatically falls back to the App Store Connect upload API flow (`buildUploads` + `buildUploadFiles` + checksum marking/polling).
 
 ### Help
 

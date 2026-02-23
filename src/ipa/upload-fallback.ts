@@ -1,7 +1,10 @@
 import { InfrastructureError } from "../api/client.js";
 import { defaultProcessRunner, type ProcessRunner } from "./artifact.js";
 
-export type FallbackUploadMethod = "xcrun altool" | "xcrun iTMSTransporter";
+export type FallbackUploadMethod =
+  | "xcrun altool"
+  | "xcrun iTMSTransporter"
+  | "App Store Connect API";
 
 export interface FallbackUploadCredentials {
   readonly keyId: string;
@@ -10,27 +13,55 @@ export interface FallbackUploadCredentials {
   readonly privateKey?: string;
 }
 
+export interface FallbackUploadResult {
+  readonly method: FallbackUploadMethod;
+  readonly waitApplied: boolean;
+}
+
+export async function uploadWithXcrunAltool(
+  ipaPath: string,
+  options?: {
+    readonly processRunner?: ProcessRunner;
+    readonly credentials?: FallbackUploadCredentials;
+    readonly env?: NodeJS.ProcessEnv;
+    readonly waitForProcessing?: boolean;
+  }
+): Promise<{ readonly method: "xcrun altool"; readonly waitApplied: boolean }> {
+  const processRunner = options?.processRunner ?? defaultProcessRunner;
+  const credentials = resolveFallbackCredentials(options?.credentials, options?.env);
+  const waitForProcessing = options?.waitForProcessing ?? false;
+  const altoolArgs = createAltoolArgs(ipaPath, credentials, waitForProcessing);
+
+  await processRunner.run("xcrun", altoolArgs);
+
+  return {
+    method: "xcrun altool",
+    waitApplied: waitForProcessing
+  };
+}
+
 export async function uploadWithXcrunFallback(
   ipaPath: string,
   options?: {
     readonly processRunner?: ProcessRunner;
     readonly credentials?: FallbackUploadCredentials;
     readonly env?: NodeJS.ProcessEnv;
+    readonly waitForProcessing?: boolean;
   }
-): Promise<FallbackUploadMethod> {
-  const processRunner = options?.processRunner ?? defaultProcessRunner;
-  const credentials = resolveFallbackCredentials(options?.credentials, options?.env);
-  const altoolArgs = createAltoolArgs(ipaPath, credentials);
-
+): Promise<FallbackUploadResult> {
   try {
-    await processRunner.run("xcrun", altoolArgs);
-    return "xcrun altool";
+    return await uploadWithXcrunAltool(ipaPath, options);
   } catch (altoolError) {
+    const processRunner = options?.processRunner ?? defaultProcessRunner;
+    const credentials = resolveFallbackCredentials(options?.credentials, options?.env);
     const transporterArgs = createTransporterArgs(ipaPath, credentials);
 
     try {
       await processRunner.run("xcrun", transporterArgs);
-      return "xcrun iTMSTransporter";
+      return {
+        method: "xcrun iTMSTransporter",
+        waitApplied: false
+      };
     } catch (transporterError) {
       throw new InfrastructureError(
         [
@@ -72,7 +103,11 @@ function resolveFallbackCredentials(
   };
 }
 
-function createAltoolArgs(ipaPath: string, credentials: FallbackUploadCredentials): string[] {
+function createAltoolArgs(
+  ipaPath: string,
+  credentials: FallbackUploadCredentials,
+  waitForProcessing: boolean
+): string[] {
   const args = [
     "altool",
     "--upload-app",
@@ -93,6 +128,10 @@ function createAltoolArgs(ipaPath: string, credentials: FallbackUploadCredential
 
   if (credentials.privateKey) {
     args.push("--auth-string", toAuthString(credentials.privateKey));
+  }
+
+  if (waitForProcessing) {
+    args.push("--wait");
   }
 
   return args;

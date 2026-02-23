@@ -168,7 +168,7 @@ describe("uploadBuild", () => {
     }
   });
 
-  it("applies upload flow and polls until complete", async () => {
+  it("falls back to API upload flow and polls until complete when altool is unavailable", async () => {
     const ipaPath = path.join(os.tmpdir(), `upload-apply-${Date.now()}.ipa`);
     await writeFile(ipaPath, "dummy ipa bytes");
 
@@ -201,6 +201,7 @@ describe("uploadBuild", () => {
       expect(result.mode).toBe("applied");
       expect(result.buildUploadId).toBe("upload-1");
       expect(result.finalBuildUploadState).toBe("COMPLETE");
+      expect(result.fallbackUploadMethod).toBe("App Store Connect API");
     } finally {
       await rm(ipaPath, { force: true });
     }
@@ -239,63 +240,15 @@ describe("uploadBuild", () => {
     }
   });
 
-  it("falls back to xcrun altool when sourceFileChecksums is rejected", async () => {
-    const ipaPath = path.join(os.tmpdir(), `upload-fallback-altool-${Date.now()}.ipa`);
+  it("uses xcrun altool as the primary upload path when available", async () => {
+    const ipaPath = path.join(os.tmpdir(), `upload-primary-altool-${Date.now()}.ipa`);
     await writeFile(ipaPath, "dummy ipa bytes");
 
-    const requests: HttpRequest[] = [];
     const xcrunInvocations: string[][] = [];
 
     const client = {
-      request: async <T>(request: HttpRequest) => {
-        requests.push(request);
-
-        if (request.method === "POST" && request.path === "/v1/buildUploads") {
-          return {
-            status: 201,
-            headers: new Headers(),
-            data: {
-              data: {
-                id: "upload-1",
-                attributes: {
-                  state: { state: "AWAITING_UPLOAD", errors: [], warnings: [], infos: [] }
-                }
-              }
-            }
-          } as HttpResponse<T>;
-        }
-
-        if (request.method === "POST" && request.path === "/v1/buildUploadFiles") {
-          return {
-            status: 201,
-            headers: new Headers(),
-            data: { data: { id: "file-1", attributes: { uploadOperations: [] } } }
-          } as HttpResponse<T>;
-        }
-
-        if (request.method === "PATCH" && request.path.startsWith("/v1/buildUploadFiles/")) {
-          throw new InfrastructureError(
-            "App Store Connect request failed (409): sourceFileChecksums is invalid",
-            undefined,
-            {
-              statusCode: 409,
-              responseJson: {
-                errors: [
-                  {
-                    status: "409",
-                    source: { pointer: "/data/attributes/sourceFileChecksums" }
-                  }
-                ]
-              }
-            }
-          );
-        }
-
-        if (request.method === "GET" && request.path.startsWith("/v1/buildUploads/")) {
-          throw new Error("Polling should be skipped when fallback upload is used.");
-        }
-
-        throw new Error(`Unexpected request: ${request.method} ${request.path}`);
+      request: async () => {
+        throw new Error("API fallback should not be used when altool succeeds.");
       }
     } as unknown as AppStoreConnectClient;
 
@@ -340,21 +293,76 @@ describe("uploadBuild", () => {
 
       expect(result.mode).toBe("applied");
       expect(result.buildUploadId).toBeNull();
-      expect(result.finalBuildUploadState).toBe("FALLBACK_SUBMITTED");
-      expect(result.fallbackUploadMethod).toBe("xcrun altool");
+      expect(result.finalBuildUploadState).toBe("ALTOOL_WAIT_COMPLETED");
+      expect(result.fallbackUploadMethod).toBeUndefined();
       expect(xcrunInvocations).toHaveLength(1);
       expect(xcrunInvocations[0]).toContain("altool");
       expect(xcrunInvocations[0]).toContain("--auth-string");
-      expect(
-        requests.some((request) => request.method === "GET" && request.path.startsWith("/v1/buildUploads/"))
-      ).toBe(false);
+      expect(xcrunInvocations[0]).toContain("--wait");
     } finally {
       await rm(ipaPath, { force: true });
     }
   });
 
-  it("falls back to iTMSTransporter when altool fallback fails", async () => {
-    const ipaPath = path.join(os.tmpdir(), `upload-fallback-transporter-${Date.now()}.ipa`);
+  it("falls back to App Store Connect API when altool upload fails", async () => {
+    const ipaPath = path.join(os.tmpdir(), `upload-fallback-api-${Date.now()}.ipa`);
+    await writeFile(ipaPath, "dummy ipa bytes");
+
+    const { client } = createMockClient();
+    let altoolCalls = 0;
+    const processRunner = createProcessRunnerWithXcrun(
+      {
+        CFBundleIdentifier: "com.example.demo",
+        CFBundleShortVersionString: "1.0.0",
+        CFBundleVersion: "42"
+      },
+      async (args) => {
+        if (args[0] === "altool") {
+          altoolCalls += 1;
+          throw new InfrastructureError("altool failed");
+        }
+        throw new InfrastructureError(`Unexpected xcrun command: ${args.join(" ")}`);
+      }
+    );
+
+    try {
+      const result = await uploadBuild(
+        client,
+        {
+          ipaSource: { kind: "prebuilt", ipaPath },
+          appId: "app-1",
+          expectedBundleId: "com.example.demo",
+          expectedVersion: "1.0.0",
+          expectedBuildNumber: "42",
+          waitProcessing: true,
+          apply: true
+        },
+        {
+          sleep: async () => undefined,
+          pollIntervalMs: 1,
+          pollTimeoutMs: 100,
+          processRunner,
+          fallbackEnv: {
+            ...process.env,
+            ASC_KEY_ID: "KEY1234567",
+            ASC_ISSUER_ID: "issuer-123",
+            ASC_PRIVATE_KEY:
+              "-----BEGIN PRIVATE KEY-----\nabc123\n-----END PRIVATE KEY-----"
+          }
+        }
+      );
+
+      expect(result.buildUploadId).toBe("upload-1");
+      expect(result.finalBuildUploadState).toBe("COMPLETE");
+      expect(result.fallbackUploadMethod).toBe("App Store Connect API");
+      expect(altoolCalls).toBe(1);
+    } finally {
+      await rm(ipaPath, { force: true });
+    }
+  });
+
+  it("fails when API fallback rejects sourceFileChecksums", async () => {
+    const ipaPath = path.join(os.tmpdir(), `upload-fallback-api-checksum-${Date.now()}.ipa`);
     await writeFile(ipaPath, "dummy ipa bytes");
 
     const client = {
@@ -401,15 +409,13 @@ describe("uploadBuild", () => {
         }
 
         if (request.method === "GET" && request.path.startsWith("/v1/buildUploads/")) {
-          throw new Error("Polling should be skipped when fallback upload is used.");
+          throw new Error("Polling should not happen when checksum marking fails.");
         }
 
         throw new Error(`Unexpected request: ${request.method} ${request.path}`);
       }
     } as unknown as AppStoreConnectClient;
 
-    let altoolCalls = 0;
-    let transporterCalls = 0;
     const processRunner = createProcessRunnerWithXcrun(
       {
         CFBundleIdentifier: "com.example.demo",
@@ -418,109 +424,9 @@ describe("uploadBuild", () => {
       },
       async (args) => {
         if (args[0] === "altool") {
-          altoolCalls += 1;
           throw new InfrastructureError("altool failed");
         }
-        if (args[0] === "iTMSTransporter") {
-          transporterCalls += 1;
-          return { stdout: "transporter upload ok", stderr: "" };
-        }
-        throw new InfrastructureError("Unexpected xcrun fallback command.");
-      }
-    );
-
-    try {
-      const result = await uploadBuild(
-        client,
-        {
-          ipaSource: { kind: "prebuilt", ipaPath },
-          appId: "app-1",
-          expectedBundleId: "com.example.demo",
-          expectedVersion: "1.0.0",
-          expectedBuildNumber: "42",
-          waitProcessing: false,
-          apply: true
-        },
-        {
-          processRunner,
-          fallbackEnv: {
-            ...process.env,
-            ASC_KEY_ID: "KEY1234567",
-            ASC_ISSUER_ID: "issuer-123",
-            ASC_PRIVATE_KEY:
-              "-----BEGIN PRIVATE KEY-----\nabc123\n-----END PRIVATE KEY-----"
-          }
-        }
-      );
-
-      expect(result.finalBuildUploadState).toBe("FALLBACK_SUBMITTED");
-      expect(result.fallbackUploadMethod).toBe("xcrun iTMSTransporter");
-      expect(altoolCalls).toBe(1);
-      expect(transporterCalls).toBe(1);
-    } finally {
-      await rm(ipaPath, { force: true });
-    }
-  });
-
-  it("fails with a clear error when all xcrun fallbacks fail", async () => {
-    const ipaPath = path.join(os.tmpdir(), `upload-fallback-fails-${Date.now()}.ipa`);
-    await writeFile(ipaPath, "dummy ipa bytes");
-
-    const client = {
-      request: async <T>(request: HttpRequest) => {
-        if (request.method === "POST" && request.path === "/v1/buildUploads") {
-          return {
-            status: 201,
-            headers: new Headers(),
-            data: {
-              data: {
-                id: "upload-1",
-                attributes: {
-                  state: { state: "AWAITING_UPLOAD", errors: [], warnings: [], infos: [] }
-                }
-              }
-            }
-          } as HttpResponse<T>;
-        }
-
-        if (request.method === "POST" && request.path === "/v1/buildUploadFiles") {
-          return {
-            status: 201,
-            headers: new Headers(),
-            data: { data: { id: "file-1", attributes: { uploadOperations: [] } } }
-          } as HttpResponse<T>;
-        }
-
-        if (request.method === "PATCH" && request.path.startsWith("/v1/buildUploadFiles/")) {
-          throw new InfrastructureError(
-            "App Store Connect request failed (409): sourceFileChecksums is invalid",
-            undefined,
-            {
-              statusCode: 409,
-              responseJson: {
-                errors: [
-                  {
-                    status: "409",
-                    source: { pointer: "/data/attributes/sourceFileChecksums" }
-                  }
-                ]
-              }
-            }
-          );
-        }
-
-        throw new Error(`Unexpected request: ${request.method} ${request.path}`);
-      }
-    } as unknown as AppStoreConnectClient;
-
-    const processRunner = createProcessRunnerWithXcrun(
-      {
-        CFBundleIdentifier: "com.example.demo",
-        CFBundleShortVersionString: "1.0.0",
-        CFBundleVersion: "42"
-      },
-      async () => {
-        throw new InfrastructureError("xcrun fallback failed");
+        throw new InfrastructureError(`Unexpected xcrun command: ${args.join(" ")}`);
       }
     );
 
@@ -548,7 +454,9 @@ describe("uploadBuild", () => {
             }
           }
         )
-      ).rejects.toThrowError("xcrun fallback upload was unsuccessful");
+      ).rejects.toThrowError(
+        "App Store Connect API fallback rejected sourceFileChecksums while marking build upload file."
+      );
     } finally {
       await rm(ipaPath, { force: true });
     }
