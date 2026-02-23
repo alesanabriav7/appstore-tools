@@ -71,6 +71,7 @@ tuist generate
 Recommended daily flow (inside the app folder):
 
 ```bash
+npx appstore-tools ipa export-options --team-id ABCDE12345
 npx appstore-tools ipa generate
 npx appstore-tools builds upload --apply
 ```
@@ -130,6 +131,29 @@ Auto mode for `ipa generate` infers:
 2. `ExportOptions.plist` from local files
 3. scheme from `xcodebuild -list -json`
 4. output path as `./dist/<scheme>.ipa` when omitted
+
+### Generate ExportOptions.plist
+
+Create a minimal production-ready template for TestFlight/App Store:
+
+```bash
+npx appstore-tools ipa export-options --team-id ABCDE12345
+```
+
+Defaults:
+
+- output path: `./ExportOptions.plist`
+- method: `app-store-connect`
+- signing style: `automatic`
+
+Optional flags:
+
+```bash
+npx appstore-tools ipa export-options \
+  --output-plist ./config/ExportOptions.plist \
+  --signing-style manual \
+  --force
+```
 
 ### Upload build
 

@@ -8,6 +8,7 @@ import { AppStoreConnectClient, InfrastructureError } from "./api/client.js";
 import type { IpaSource } from "./ipa/artifact.js";
 import { appsListCommand } from "./commands/apps-list.js";
 import { buildsUploadCommand } from "./commands/builds-upload.js";
+import { ipaExportOptionsCommand } from "./commands/ipa-export-options.js";
 import { ipaGenerateCommand } from "./commands/ipa-generate.js";
 
 // ---------------------------------------------------------------------------
@@ -99,6 +100,15 @@ export interface IpaGenerateCliCommand {
   readonly ipaSource?: Exclude<IpaSource, { kind: "prebuilt" }>;
 }
 
+export interface IpaExportOptionsCliCommand {
+  readonly kind: "ipa-export-options";
+  readonly json: boolean;
+  readonly outputPlistPath?: string;
+  readonly teamId?: string;
+  readonly signingStyle?: "automatic" | "manual";
+  readonly force: boolean;
+}
+
 export interface BuildsUploadCliCommand {
   readonly kind: "builds-upload";
   readonly json: boolean;
@@ -117,6 +127,7 @@ export interface HelpCliCommand {
 export type CliCommand =
   | AppsListCliCommand
   | IpaGenerateCliCommand
+  | IpaExportOptionsCliCommand
   | BuildsUploadCliCommand
   | HelpCliCommand;
 
@@ -144,6 +155,11 @@ export function parseCliCommand(argv: readonly string[]): CliCommand {
   if (head === "ipa" && next === "generate") {
     const flags = parseFlags(rest);
     return parseIpaGenerateCommand(flags);
+  }
+
+  if (head === "ipa" && next === "export-options") {
+    const flags = parseFlags(rest);
+    return parseIpaExportOptionsCommand(flags);
   }
 
   throw new InfrastructureError(`Unknown command: ${argv.join(" ")}`);
@@ -180,6 +196,28 @@ function parseIpaGenerateCommand(flags: ParsedFlags): IpaGenerateCliCommand {
     json: flags.booleans.has("json"),
     ...(outputIpaPath ? { outputIpaPath } : {}),
     ...(ipaSource ? { ipaSource } : {})
+  };
+}
+
+function parseIpaExportOptionsCommand(flags: ParsedFlags): IpaExportOptionsCliCommand {
+  const outputPlistPath = normalizeOptionalFlag(flags.values["output-plist"]);
+  const teamId = normalizeOptionalFlag(flags.values["team-id"]);
+  const signingStyleRaw = normalizeOptionalFlag(flags.values["signing-style"]);
+  const signingStyle = signingStyleRaw ?? "automatic";
+
+  if (signingStyle !== "automatic" && signingStyle !== "manual") {
+    throw new InfrastructureError(
+      "Invalid --signing-style. Allowed values: automatic, manual."
+    );
+  }
+
+  return {
+    kind: "ipa-export-options",
+    json: flags.booleans.has("json"),
+    force: flags.booleans.has("force"),
+    ...(outputPlistPath ? { outputPlistPath } : {}),
+    ...(teamId ? { teamId } : {}),
+    ...(signingStyleRaw ? { signingStyle } : {})
   };
 }
 
@@ -356,6 +394,7 @@ Usage:
   appstore-tools --help
   appstore-tools apps list [--json]
   appstore-tools ipa generate [--output-ipa <path>] [xcodebuild/custom options] [--json]
+  appstore-tools ipa export-options [--output-plist <path>] [--team-id <id>] [--signing-style <automatic|manual>] [--force] [--json]
   appstore-tools builds upload [--app <appId|bundleId>] [--version <x.y.z>] [--build-number <n>] [--ipa <path> | generation options] [--wait-processing] [--json] [--apply]
 
 Required environment variables:
@@ -372,6 +411,10 @@ Generation options (xcodebuild mode):
 
 Generation options (custom mode):
   --build-command "<shell command>" --generated-ipa-path <path> [--output-ipa <path>]
+
+Export options template generation:
+  ipa export-options writes a TestFlight/App Store template (method=app-store-connect).
+  Defaults: --output-plist ./ExportOptions.plist and --signing-style automatic.
 
 builds upload auto-detection:
   If omitted, --app/--version/--build-number are inferred from IPA metadata.
@@ -412,6 +455,10 @@ async function handleCliCommand(
 
   if (command.kind === "ipa-generate") {
     return ipaGenerateCommand(command);
+  }
+
+  if (command.kind === "ipa-export-options") {
+    return ipaExportOptionsCommand(command);
   }
 
   const config = await resolveCliEnvironment(env);

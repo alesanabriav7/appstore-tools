@@ -29,6 +29,10 @@ export {
   type BuildsUploadInput,
   type BuildsUploadResult
 } from "./commands/builds-upload.js";
+export {
+  ipaExportOptionsCommand,
+  type IpaExportOptionsCommandInput
+} from "./commands/ipa-export-options.js";
 export { ipaGenerateCommand } from "./commands/ipa-generate.js";
 
 // IPA utilities
@@ -56,5 +60,6 @@ export {
   type BuildsUploadCliCommand,
   type CliCommand,
   type HelpCliCommand,
+  type IpaExportOptionsCliCommand,
   type IpaGenerateCliCommand
 } from "./cli.js";
