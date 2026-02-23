@@ -9,6 +9,7 @@ import type { IpaSource } from "./ipa/artifact.js";
 import { resolveAscKeyIdFromEnvironment } from "./asc/key-id.js";
 import { appsListCommand } from "./commands/apps-list.js";
 import { buildsUploadCommand } from "./commands/builds-upload.js";
+import { certificatesCreateCommand } from "./commands/certificates-create.js";
 import { ipaExportOptionsCommand } from "./commands/ipa-export-options.js";
 import { ipaGenerateCommand } from "./commands/ipa-generate.js";
 
@@ -121,6 +122,16 @@ export interface BuildsUploadCliCommand {
   readonly ipaSource?: IpaSource;
 }
 
+export interface CertificatesCreateCliCommand {
+  readonly kind: "certificates-create";
+  readonly json: boolean;
+  readonly skipInstall: boolean;
+  readonly certificateType?: string;
+  readonly commonName?: string;
+  readonly outputDir?: string;
+  readonly keychainPath?: string;
+}
+
 export interface HelpCliCommand {
   readonly kind: "help";
 }
@@ -130,6 +141,7 @@ export type CliCommand =
   | IpaGenerateCliCommand
   | IpaExportOptionsCliCommand
   | BuildsUploadCliCommand
+  | CertificatesCreateCliCommand
   | HelpCliCommand;
 
 export function parseCliCommand(argv: readonly string[]): CliCommand {
@@ -161,6 +173,11 @@ export function parseCliCommand(argv: readonly string[]): CliCommand {
   if (head === "ipa" && next === "export-options") {
     const flags = parseFlags(rest);
     return parseIpaExportOptionsCommand(flags);
+  }
+
+  if (head === "certificates" && next === "create") {
+    const flags = parseFlags(rest);
+    return parseCertificatesCreateCommand(flags);
   }
 
   throw new InfrastructureError(`Unknown command: ${argv.join(" ")}`);
@@ -219,6 +236,23 @@ function parseIpaExportOptionsCommand(flags: ParsedFlags): IpaExportOptionsCliCo
     ...(outputPlistPath ? { outputPlistPath } : {}),
     ...(teamId ? { teamId } : {}),
     ...(signingStyleRaw ? { signingStyle } : {})
+  };
+}
+
+function parseCertificatesCreateCommand(flags: ParsedFlags): CertificatesCreateCliCommand {
+  const certificateType = normalizeOptionalFlag(flags.values.type);
+  const commonName = normalizeOptionalFlag(flags.values["common-name"]);
+  const outputDir = normalizeOptionalFlag(flags.values["output-dir"]);
+  const keychainPath = normalizeOptionalFlag(flags.values.keychain);
+
+  return {
+    kind: "certificates-create",
+    json: flags.booleans.has("json"),
+    skipInstall: flags.booleans.has("skip-install"),
+    ...(certificateType ? { certificateType } : {}),
+    ...(commonName ? { commonName } : {}),
+    ...(outputDir ? { outputDir } : {}),
+    ...(keychainPath ? { keychainPath } : {})
   };
 }
 
@@ -397,6 +431,7 @@ Usage:
   appstore-tools ipa generate [--output-ipa <path>] [xcodebuild/custom options] [--json]
   appstore-tools ipa export-options [--output-plist <path>] [--team-id <id>] [--signing-style <automatic|manual>] [--force] [--json]
   appstore-tools builds upload [--app <appId|bundleId>] [--version <x.y.z>] [--build-number <n>] [--ipa <path> | generation options] [--wait-processing] [--json] [--apply]
+  appstore-tools certificates create [--type <certificateType>] [--common-name <name>] [--output-dir <path>] [--keychain <path>] [--skip-install] [--json]
 
 Required environment variables (App Store Connect API commands):
   ASC_ISSUER_ID
@@ -433,6 +468,11 @@ ipa generate auto-detection:
   If no source options are provided, the CLI infers xcodebuild inputs from local project files.
   If no ExportOptions.plist is available, one is generated automatically.
   If --output-ipa is omitted, output defaults to ./dist/<scheme>.ipa.
+
+certificates create:
+  Generates a new RSA private key + CSR, creates certificate via /v1/certificates, saves .key/.csr/.cer to ./dist/certificates.
+  Installs certificate + private key into login keychain by default (use --skip-install to disable).
+  Default certificate type: IOS_DISTRIBUTION.
 `);
 }
 
@@ -486,6 +526,10 @@ async function handleCliCommand(
 
   if (command.kind === "builds-upload") {
     return buildsUploadCommand(client, command);
+  }
+
+  if (command.kind === "certificates-create") {
+    return certificatesCreateCommand(client, command);
   }
 
   return assertNever(command);
