@@ -4,6 +4,11 @@ import * as os from "node:os";
 import * as path from "node:path";
 
 import { InfrastructureError } from "../api/client.js";
+import {
+  SigningError,
+  resolveArchiveAuthenticationContext,
+  resolveOrCreateExportOptionsPlist
+} from "./signing.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -17,7 +22,7 @@ export interface PrebuiltIpaSource {
 export interface XcodebuildIpaSource {
   readonly kind: "xcodebuild";
   readonly scheme: string;
-  readonly exportOptionsPlist: string;
+  readonly exportOptionsPlist?: string;
   readonly workspacePath?: string;
   readonly projectPath?: string;
   readonly configuration?: string;
@@ -164,12 +169,6 @@ async function resolveXcodebuild(
     throw new InfrastructureError("scheme is required for xcodebuild IPA source.");
   }
 
-  if (!source.exportOptionsPlist.trim()) {
-    throw new InfrastructureError(
-      "exportOptionsPlist is required for xcodebuild IPA source."
-    );
-  }
-
   const hasWorkspace = Boolean(source.workspacePath);
   const hasProject = Boolean(source.projectPath);
 
@@ -187,51 +186,75 @@ async function resolveXcodebuild(
     ? path.resolve(source.archivePath)
     : path.join(rootTemporaryDirectory, "archive.xcarchive");
   const exportDirectory = path.join(rootTemporaryDirectory, "export");
+  let authContext:
+    | Awaited<ReturnType<typeof resolveArchiveAuthenticationContext>>
+    | undefined;
+  let exportOptionsContext:
+    | Awaited<ReturnType<typeof resolveOrCreateExportOptionsPlist>>
+    | undefined;
+  let keepBuildArtifacts = false;
 
-  const exportOptionsPlist = path.resolve(source.exportOptionsPlist);
-  await access(exportOptionsPlist, constants.R_OK).catch((error: unknown) => {
-    throw new InfrastructureError(
-      `Export options plist is not readable: ${exportOptionsPlist}`,
-      error
+  try {
+    authContext = await resolveArchiveAuthenticationContext(process.env);
+    exportOptionsContext = await resolveOrCreateExportOptionsPlist(
+      source.exportOptionsPlist,
+      rootTemporaryDirectory,
+      process.env
     );
-  });
 
-  const archiveArgs = createArchiveArgs(source, archivePath);
-  await processRunner.run("xcodebuild", archiveArgs);
+    const archiveArgs = createArchiveArgs(source, archivePath, authContext);
+    await runSignedXcodebuild(processRunner, archiveArgs, "xcodebuild archive");
 
-  await mkdir(exportDirectory, { recursive: true });
+    await mkdir(exportDirectory, { recursive: true });
 
-  const exportArgs = [
-    "-exportArchive",
-    "-archivePath",
-    archivePath,
-    "-exportOptionsPlist",
-    exportOptionsPlist,
-    "-exportPath",
-    exportDirectory
-  ];
-  await processRunner.run("xcodebuild", exportArgs);
+    const exportArgs = [
+      "-exportArchive",
+      "-archivePath",
+      archivePath,
+      "-exportOptionsPlist",
+      exportOptionsContext.exportOptionsPlistPath,
+      "-exportPath",
+      exportDirectory
+    ];
+    await runSignedXcodebuild(processRunner, exportArgs, "xcodebuild -exportArchive");
 
-  const exportedIpaPath = await findIpaInDirectory(exportDirectory);
+    const exportedIpaPath = await findIpaInDirectory(exportDirectory);
 
-  if (!source.outputIpaPath) {
-    return {
-      ipaPath: exportedIpaPath,
-      dispose: async () => {
-        await cleanup(createdTemporaryDirectories);
-      }
-    };
+    if (!source.outputIpaPath) {
+      keepBuildArtifacts = true;
+
+      return {
+        ipaPath: exportedIpaPath,
+        dispose: async () => {
+          await cleanup(createdTemporaryDirectories);
+        }
+      };
+    }
+
+    const outputIpaPath = path.resolve(source.outputIpaPath);
+    await mkdir(path.dirname(outputIpaPath), { recursive: true });
+    await copyFile(exportedIpaPath, outputIpaPath);
+
+    return { ipaPath: outputIpaPath };
+  } finally {
+    await authContext?.cleanup().catch(() => undefined);
+    await exportOptionsContext?.cleanup().catch(() => undefined);
+
+    if (!keepBuildArtifacts) {
+      await cleanup(createdTemporaryDirectories).catch(() => undefined);
+    }
   }
-
-  const outputIpaPath = path.resolve(source.outputIpaPath);
-  await mkdir(path.dirname(outputIpaPath), { recursive: true });
-  await copyFile(exportedIpaPath, outputIpaPath);
-  await cleanup(createdTemporaryDirectories);
-
-  return { ipaPath: outputIpaPath };
 }
 
-function createArchiveArgs(source: XcodebuildIpaSource, archivePath: string): string[] {
+function createArchiveArgs(
+  source: XcodebuildIpaSource,
+  archivePath: string,
+  authentication: {
+    readonly authenticationKeyPath: string;
+    readonly authenticationKeyID: string;
+    readonly authenticationKeyIssuerID: string;
+  }
+): string[] {
   const args = [
     "archive",
     "-scheme",
@@ -239,7 +262,16 @@ function createArchiveArgs(source: XcodebuildIpaSource, archivePath: string): st
     "-configuration",
     source.configuration ?? DEFAULT_CONFIGURATION,
     "-archivePath",
-    archivePath
+    archivePath,
+    "-destination",
+    "generic/platform=iOS",
+    "-allowProvisioningUpdates",
+    "-authenticationKeyPath",
+    authentication.authenticationKeyPath,
+    "-authenticationKeyID",
+    authentication.authenticationKeyID,
+    "-authenticationKeyIssuerID",
+    authentication.authenticationKeyIssuerID
   ];
 
   if (source.workspacePath) {
@@ -255,6 +287,19 @@ function createArchiveArgs(source: XcodebuildIpaSource, archivePath: string): st
   }
 
   return args;
+}
+
+async function runSignedXcodebuild(
+  processRunner: ProcessRunner,
+  args: readonly string[],
+  stepName: string
+): Promise<void> {
+  try {
+    await processRunner.run("xcodebuild", args);
+  } catch (error) {
+    const details = error instanceof Error ? error.message : String(error);
+    throw new SigningError(`${stepName} failed.\n${details}`, error);
+  }
 }
 
 async function findIpaInDirectory(directoryPath: string): Promise<string> {

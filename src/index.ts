@@ -45,6 +45,7 @@ export {
   type ProcessRunner,
   type XcodebuildIpaSource
 } from "./ipa/artifact.js";
+export { SigningError } from "./ipa/signing.js";
 export {
   verifyIpa,
   type IpaPreflightReport,

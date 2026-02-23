@@ -2,8 +2,7 @@ import { access, constants, mkdir, writeFile } from "node:fs/promises";
 import * as path from "node:path";
 
 import { InfrastructureError } from "../api/client.js";
-
-type SigningStyle = "automatic" | "manual";
+import { createExportOptionsPlist, type SigningStyle } from "../ipa/signing.js";
 
 export interface IpaExportOptionsCommandInput {
   readonly json: boolean;
@@ -55,7 +54,7 @@ export async function ipaExportOptionsCommand(
       JSON.stringify(
         {
           outputPlistPath,
-          method: "app-store-connect",
+          method: "app-store",
           destination: "export",
           signingStyle,
           ...(teamId ? { teamId } : {})
@@ -66,54 +65,10 @@ export async function ipaExportOptionsCommand(
     );
   } else {
     console.log(`Generated ExportOptions.plist: ${outputPlistPath}`);
-    console.log("method=app-store-connect (TestFlight/App Store)");
+    console.log("method=app-store (TestFlight/App Store)");
     console.log(`signingStyle=${signingStyle}`);
     console.log(`teamID=${teamId ?? "from archive defaults"}`);
   }
 
   return 0;
-}
-
-function createExportOptionsPlist(input: {
-  readonly signingStyle: SigningStyle;
-  readonly teamId?: string;
-}): string {
-  const lines = [
-    "<?xml version=\"1.0\" encoding=\"UTF-8\"?>",
-    "<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">",
-    "<plist version=\"1.0\">",
-    "<dict>",
-    "  <key>method</key>",
-    "  <string>app-store-connect</string>",
-    "  <key>destination</key>",
-    "  <string>export</string>",
-    "  <key>signingStyle</key>",
-    `  <string>${input.signingStyle}</string>`,
-    "  <key>uploadSymbols</key>",
-    "  <true/>",
-    "  <key>stripSwiftSymbols</key>",
-    "  <true/>",
-    "  <key>manageAppVersionAndBuildNumber</key>",
-    "  <true/>"
-  ];
-
-  if (input.teamId) {
-    lines.push("  <key>teamID</key>");
-    lines.push(`  <string>${escapeXml(input.teamId)}</string>`);
-  }
-
-  lines.push("</dict>");
-  lines.push("</plist>");
-  lines.push("");
-
-  return lines.join("\n");
-}
-
-function escapeXml(value: string): string {
-  return value
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&apos;");
 }

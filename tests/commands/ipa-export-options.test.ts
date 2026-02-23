@@ -35,7 +35,7 @@ describe("ipaExportOptionsCommand", () => {
 
     const contents = await readFile(outputPath, "utf8");
     expect(contents).toContain("<key>method</key>");
-    expect(contents).toContain("<string>app-store-connect</string>");
+    expect(contents).toContain("<string>app-store</string>");
     expect(contents).toContain("<key>signingStyle</key>");
     expect(contents).toContain("<string>automatic</string>");
     expect(contents).toContain("<key>uploadSymbols</key>");

@@ -189,6 +189,43 @@ describe("autoDetectIpaSource", () => {
     }
   });
 
+  it("detects xcodebuild source even when ExportOptions.plist is missing", async () => {
+    const root = await mkdtemp(join(tmpdir(), "asc-autodetect-generate-no-plist-"));
+
+    try {
+      const workspacePath = join(root, "Demo.xcworkspace");
+      await mkdir(workspacePath);
+
+      const processRunner: ProcessRunner = {
+        run: async (command, args) => {
+          if (command === "xcodebuild" && args.join(" ") === `-list -json -workspace ${workspacePath}`) {
+            return {
+              stdout: JSON.stringify({
+                workspace: { schemes: ["Demo"] }
+              }),
+              stderr: ""
+            };
+          }
+
+          throw new Error(`Unexpected command: ${command} ${args.join(" ")}`);
+        }
+      };
+
+      const source = await autoDetectIpaGenerateSource({
+        cwd: root,
+        processRunner
+      });
+
+      expect(source).toEqual({
+        kind: "xcodebuild",
+        scheme: "Demo",
+        workspacePath
+      });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("creates default output path from scheme", () => {
     const output = createDefaultOutputIpaPath({
       kind: "xcodebuild",

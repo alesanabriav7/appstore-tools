@@ -190,6 +190,27 @@ describe("parseCliCommand", () => {
     });
   });
 
+  it("parses ipa generate xcodebuild mode without explicit export options plist", () => {
+    const command = parseCliCommand([
+      "ipa",
+      "generate",
+      "--scheme",
+      "Demo",
+      "--workspace-path",
+      "./Demo.xcworkspace"
+    ]);
+
+    expect(command).toEqual({
+      kind: "ipa-generate",
+      json: false,
+      ipaSource: {
+        kind: "xcodebuild",
+        scheme: "Demo",
+        workspacePath: "./Demo.xcworkspace"
+      }
+    });
+  });
+
   it("parses ipa generate command with auto-detection enabled", () => {
     const command = parseCliCommand(["ipa", "generate"]);
 

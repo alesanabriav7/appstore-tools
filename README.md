@@ -38,7 +38,7 @@ ASC_ISSUER_ID=your-issuer-id
 ASC_KEY_ID=your-key-id
 ```
 
-For the private key, point to your `.p8` file (recommended):
+For API commands (`apps list`, App Store Connect requests in `builds upload`), provide JWT private key:
 
 ```env
 ASC_PRIVATE_KEY_PATH=./AuthKey_XXXXXX.p8
@@ -50,7 +50,21 @@ Or pass the key inline:
 ASC_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----"
 ```
 
-`ASC_PRIVATE_KEY_PATH` takes priority when both are set. `ASC_BASE_URL` is optional and defaults to `https://api.appstoreconnect.apple.com/`.
+For xcodebuild archive/generate signing (`ipa generate` and xcodebuild-backed generation):
+
+```env
+ASC_KEY_PATH=./AuthKey_XXXXXX.p8
+# or base64-encoded .p8 contents:
+ASC_KEY_CONTENT=base64-encoded-p8
+```
+
+Optional:
+
+```env
+ASC_TEAM_ID=ABCDE12345
+```
+
+`ASC_BASE_URL` is optional and defaults to `https://api.appstoreconnect.apple.com/`.
 
 ## Usage
 
@@ -90,15 +104,14 @@ npx appstore-tools apps list --json
 
 ### Generate IPA
 
-No credentials required.
-
 Default (no flags):
 
 ```bash
 npx appstore-tools ipa generate
 ```
 
-This works when the current folder has an iOS project context (`.xcworkspace` or `.xcodeproj`) and an `ExportOptions.plist`.
+This works when the current folder has an iOS project context (`.xcworkspace` or `.xcodeproj`).
+If `ExportOptions.plist` is not found, the CLI generates one automatically.
 
 Optional override (only if needed):
 
@@ -112,8 +125,7 @@ If auto-detection is ambiguous, use explicit xcodebuild flags:
 npx appstore-tools ipa generate \
   --output-ipa ./dist/MyApp.ipa \
   --scheme MyApp \
-  --workspace-path ./MyApp.xcworkspace \
-  --export-options-plist ./ExportOptions.plist
+  --workspace-path ./MyApp.xcworkspace
 ```
 
 If your project uses a custom build script, use custom mode:
@@ -128,7 +140,7 @@ npx appstore-tools ipa generate \
 Auto mode for `ipa generate` infers:
 
 1. workspace/project from local `.xcworkspace` / `.xcodeproj` (including Tuist-generated projects)
-2. `ExportOptions.plist` from local files
+2. `ExportOptions.plist` from local files when available, otherwise generates one dynamically
 3. scheme from `xcodebuild -list -json`
 4. output path as `./dist/<scheme>.ipa` when omitted
 
@@ -143,7 +155,7 @@ npx appstore-tools ipa export-options --team-id ABCDE12345
 Defaults:
 
 - output path: `./ExportOptions.plist`
-- method: `app-store-connect`
+- method: `app-store`
 - signing style: `automatic`
 
 Optional flags:
@@ -180,7 +192,7 @@ Auto mode resolves:
 - app from `CFBundleIdentifier`
 - version from `CFBundleShortVersionString`
 - build number from `CFBundleVersion`
-- IPA source from newest local `.ipa`, or from project build context (`.xcworkspace` / `.xcodeproj` + `ExportOptions.plist` + scheme)
+- IPA source from newest local `.ipa`, or from project build context (`.xcworkspace` / `.xcodeproj` + scheme)
 
 Optional overrides (only if needed):
 
@@ -201,7 +213,6 @@ npx appstore-tools builds upload \
   --build-number 45 \
   --scheme MyApp \
   --workspace-path ./MyApp.xcworkspace \
-  --export-options-plist ./ExportOptions.plist \
   --apply
 ```
 

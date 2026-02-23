@@ -286,7 +286,7 @@ function parseIpaSource(
   }
 
   const scheme = requireFlag(flags, "scheme");
-  const exportOptionsPlist = requireFlag(flags, "export-options-plist");
+  const exportOptionsPlist = normalizeOptionalFlag(flags.values["export-options-plist"]);
 
   if (hasWorkspacePath === hasProjectPath) {
     throw new InfrastructureError(
@@ -299,7 +299,7 @@ function parseIpaSource(
   return {
     kind: "xcodebuild",
     scheme,
-    exportOptionsPlist,
+    ...(exportOptionsPlist ? { exportOptionsPlist } : {}),
     ...(flags.values["workspace-path"] ? { workspacePath: flags.values["workspace-path"] } : {}),
     ...(flags.values["project-path"] ? { projectPath: flags.values["project-path"] } : {}),
     ...(flags.values.configuration ? { configuration: flags.values.configuration } : {}),
@@ -397,7 +397,7 @@ Usage:
   appstore-tools ipa export-options [--output-plist <path>] [--team-id <id>] [--signing-style <automatic|manual>] [--force] [--json]
   appstore-tools builds upload [--app <appId|bundleId>] [--version <x.y.z>] [--build-number <n>] [--ipa <path> | generation options] [--wait-processing] [--json] [--apply]
 
-Required environment variables:
+Required environment variables (App Store Connect API commands):
   ASC_ISSUER_ID
   ASC_KEY_ID
   ASC_PRIVATE_KEY or ASC_PRIVATE_KEY_PATH
@@ -405,15 +405,23 @@ Required environment variables:
 Optional environment variables:
   ASC_BASE_URL (default: https://api.appstoreconnect.apple.com/)
 
+Required environment variables (xcodebuild archive signing):
+  ASC_ISSUER_ID
+  ASC_KEY_ID
+  ASC_KEY_PATH or ASC_KEY_CONTENT (base64)
+
+Optional environment variables (xcodebuild archive signing):
+  ASC_TEAM_ID
+
 Generation options (xcodebuild mode):
-  --scheme <name> --export-options-plist <path> (--workspace-path <path> | --project-path <path>)
+  --scheme <name> (--workspace-path <path> | --project-path <path>) [--export-options-plist <path>]
   [--configuration <Release>] [--archive-path <path>] [--derived-data-path <path>] [--output-ipa <path>]
 
 Generation options (custom mode):
   --build-command "<shell command>" --generated-ipa-path <path> [--output-ipa <path>]
 
 Export options template generation:
-  ipa export-options writes a TestFlight/App Store template (method=app-store-connect).
+  ipa export-options writes a TestFlight/App Store template (method=app-store).
   Defaults: --output-plist ./ExportOptions.plist and --signing-style automatic.
 
 builds upload auto-detection:
@@ -422,6 +430,7 @@ builds upload auto-detection:
 
 ipa generate auto-detection:
   If no source options are provided, the CLI infers xcodebuild inputs from local project files.
+  If no ExportOptions.plist is available, one is generated automatically.
   If --output-ipa is omitted, output defaults to ./dist/<scheme>.ipa.
 `);
 }
