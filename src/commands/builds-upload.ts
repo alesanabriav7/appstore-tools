@@ -80,6 +80,18 @@ interface BuildUploadFileSummary {
   readonly uploadOperations: readonly UploadOperation[];
 }
 
+interface AscApiErrorItem {
+  readonly status?: string;
+  readonly code?: string;
+  readonly source?: {
+    readonly pointer?: string;
+  };
+}
+
+interface AscApiErrorResponse {
+  readonly errors?: readonly AscApiErrorItem[];
+}
+
 // ---------------------------------------------------------------------------
 // API helpers
 // ---------------------------------------------------------------------------
@@ -246,8 +258,31 @@ function isSourceFileChecksumsConflict(error: unknown): boolean {
     return false;
   }
 
+  if (error.details?.statusCode === 409) {
+    const responseJson = error.details.responseJson;
+    if (isAscApiErrorResponse(responseJson)) {
+      return responseJson.errors?.some((item) => {
+        if (item.status !== "409") {
+          return false;
+        }
+
+        const pointer = item.source?.pointer?.toLowerCase();
+        return pointer?.includes("sourcefilechecksums") ?? false;
+      }) ?? false;
+    }
+  }
+
+  // Backward-compatible fallback for manually-constructed errors in tests/callers.
   const message = error.message.toLowerCase();
   return message.includes("(409)") && message.includes("sourcefilechecksums");
+}
+
+function isAscApiErrorResponse(value: unknown): value is AscApiErrorResponse {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+
+  return Array.isArray((value as { readonly errors?: unknown }).errors);
 }
 
 // ---------------------------------------------------------------------------

@@ -275,7 +275,19 @@ describe("uploadBuild", () => {
 
         if (request.method === "PATCH" && request.path.startsWith("/v1/buildUploadFiles/")) {
           throw new InfrastructureError(
-            "App Store Connect request failed (409): sourceFileChecksums is invalid"
+            "App Store Connect request failed (409): sourceFileChecksums is invalid",
+            undefined,
+            {
+              statusCode: 409,
+              responseJson: {
+                errors: [
+                  {
+                    status: "409",
+                    source: { pointer: "/data/attributes/sourceFileChecksums" }
+                  }
+                ]
+              }
+            }
           );
         }
 
@@ -372,7 +384,19 @@ describe("uploadBuild", () => {
 
         if (request.method === "PATCH" && request.path.startsWith("/v1/buildUploadFiles/")) {
           throw new InfrastructureError(
-            "App Store Connect request failed (409): sourceFileChecksums is invalid"
+            "App Store Connect request failed (409): sourceFileChecksums is invalid",
+            undefined,
+            {
+              statusCode: 409,
+              responseJson: {
+                errors: [
+                  {
+                    status: "409",
+                    source: { pointer: "/data/attributes/sourceFileChecksums" }
+                  }
+                ]
+              }
+            }
           );
         }
 
@@ -469,7 +493,19 @@ describe("uploadBuild", () => {
 
         if (request.method === "PATCH" && request.path.startsWith("/v1/buildUploadFiles/")) {
           throw new InfrastructureError(
-            "App Store Connect request failed (409): sourceFileChecksums is invalid"
+            "App Store Connect request failed (409): sourceFileChecksums is invalid",
+            undefined,
+            {
+              statusCode: 409,
+              responseJson: {
+                errors: [
+                  {
+                    status: "409",
+                    source: { pointer: "/data/attributes/sourceFileChecksums" }
+                  }
+                ]
+              }
+            }
           );
         }
 
