@@ -190,6 +190,27 @@ describe("parseCliCommand", () => {
     });
   });
 
+  it("parses ipa generate xcodebuild mode without explicit export options plist", () => {
+    const command = parseCliCommand([
+      "ipa",
+      "generate",
+      "--scheme",
+      "Demo",
+      "--workspace-path",
+      "./Demo.xcworkspace"
+    ]);
+
+    expect(command).toEqual({
+      kind: "ipa-generate",
+      json: false,
+      ipaSource: {
+        kind: "xcodebuild",
+        scheme: "Demo",
+        workspacePath: "./Demo.xcworkspace"
+      }
+    });
+  });
+
   it("parses ipa generate command with auto-detection enabled", () => {
     const command = parseCliCommand(["ipa", "generate"]);
 
@@ -197,5 +218,50 @@ describe("parseCliCommand", () => {
       kind: "ipa-generate",
       json: false
     });
+  });
+
+  it("parses ipa export-options command with defaults", () => {
+    const command = parseCliCommand(["ipa", "export-options"]);
+
+    expect(command).toEqual({
+      kind: "ipa-export-options",
+      json: false,
+      force: false
+    });
+  });
+
+  it("parses ipa export-options command with explicit options", () => {
+    const command = parseCliCommand([
+      "ipa",
+      "export-options",
+      "--output-plist",
+      "./config/ExportOptions.plist",
+      "--team-id",
+      "ABCDE12345",
+      "--signing-style",
+      "manual",
+      "--force",
+      "--json"
+    ]);
+
+    expect(command).toEqual({
+      kind: "ipa-export-options",
+      json: true,
+      force: true,
+      outputPlistPath: "./config/ExportOptions.plist",
+      teamId: "ABCDE12345",
+      signingStyle: "manual"
+    });
+  });
+
+  it("throws when signing-style is invalid for ipa export-options", () => {
+    expect(() =>
+      parseCliCommand([
+        "ipa",
+        "export-options",
+        "--signing-style",
+        "invalid"
+      ])
+    ).toThrowError(InfrastructureError);
   });
 });

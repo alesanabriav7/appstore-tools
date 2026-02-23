@@ -59,7 +59,7 @@ export async function autoDetectIpaSource(
   return {
     kind: "xcodebuild",
     scheme,
-    exportOptionsPlist,
+    ...(exportOptionsPlist ? { exportOptionsPlist } : {}),
     ...(container.kind === "workspace"
       ? { workspacePath: container.path }
       : { projectPath: container.path })
@@ -76,7 +76,7 @@ export async function autoDetectIpaGenerateSource(
     throw new InfrastructureError(
       [
         "Could not auto-detect an IPA generation source.",
-        "Provide xcodebuild options (--scheme, --export-options-plist, --workspace-path/--project-path) or custom command options (--build-command, --generated-ipa-path)."
+        "Provide xcodebuild options (--scheme, --workspace-path/--project-path) or custom command options (--build-command, --generated-ipa-path)."
       ].join(" "),
       error
     );
@@ -87,7 +87,7 @@ export async function autoDetectIpaGenerateSource(
   return {
     kind: "xcodebuild",
     scheme,
-    exportOptionsPlist,
+    ...(exportOptionsPlist ? { exportOptionsPlist } : {}),
     ...(container.kind === "workspace"
       ? { workspacePath: container.path }
       : { projectPath: container.path })
@@ -170,21 +170,22 @@ async function detectXcodeContainer(cwd: string): Promise<XcodeProjectContainer>
   throw new InfrastructureError(
     [
       "Could not auto-detect an IPA source.",
-      "Provide --ipa <path> or xcodebuild options (--scheme, --export-options-plist, --workspace-path/--project-path)."
+      "Provide --ipa <path> or xcodebuild options (--scheme, --workspace-path/--project-path)."
     ].join(" ")
   );
 }
 
-async function detectExportOptionsPlist(cwd: string, containerPath: string): Promise<string> {
+async function detectExportOptionsPlist(
+  cwd: string,
+  containerPath: string
+): Promise<string | undefined> {
   const plistPaths = await findPaths(cwd, {
     maxDepth: DEFAULT_SCAN_DEPTH,
     includePath: (entryPath) => /export[-_ ]?options\.plist$/i.test(path.basename(entryPath))
   });
 
   if (plistPaths.length === 0) {
-    throw new InfrastructureError(
-      "Could not auto-detect ExportOptions.plist. Provide --export-options-plist <path>."
-    );
+    return undefined;
   }
 
   if (plistPaths.length === 1) {
