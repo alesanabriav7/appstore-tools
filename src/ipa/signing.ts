@@ -4,6 +4,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 
 import { InfrastructureError } from "../api/client.js";
+import { resolveAscKeyIdFromEnvironment } from "../asc/key-id.js";
 
 export class SigningError extends InfrastructureError {
   public constructor(message: string, cause?: unknown) {
@@ -46,7 +47,7 @@ function unregisterExitCleanupPath(filePath: string): void {
 
 function normalizeRequiredEnvValue(
   env: NodeJS.ProcessEnv,
-  key: "ASC_KEY_ID" | "ASC_ISSUER_ID"
+  key: "ASC_ISSUER_ID"
 ): string {
   const value = env[key]?.trim();
 
@@ -78,7 +79,11 @@ export interface ArchiveAuthenticationContext {
 export async function resolveArchiveAuthenticationContext(
   env: NodeJS.ProcessEnv = process.env
 ): Promise<ArchiveAuthenticationContext> {
-  const keyId = normalizeRequiredEnvValue(env, "ASC_KEY_ID");
+  const keyId = await resolveAscKeyIdFromEnvironment(env);
+  if (!keyId) {
+    throw new SigningError("Missing required environment variable: ASC_KEY_ID");
+  }
+
   const issuerId = normalizeRequiredEnvValue(env, "ASC_ISSUER_ID");
 
   const keyPathFromEnv = env.ASC_KEY_PATH?.trim();
