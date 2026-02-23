@@ -11,6 +11,11 @@ import {
 import { resolveIpaArtifact, type IpaSource, type ProcessRunner } from "../ipa/artifact.js";
 import { autoDetectIpaSource } from "../ipa/autodetect.js";
 import { verifyIpa } from "../ipa/preflight.js";
+import {
+  uploadWithXcrunFallback,
+  type FallbackUploadCredentials,
+  type FallbackUploadMethod
+} from "../ipa/upload-fallback.js";
 import { listApps, type AppSummary } from "./apps-list.js";
 
 // ---------------------------------------------------------------------------
@@ -236,6 +241,15 @@ async function getBuildUpload(
   return mapBuildUpload(response.data);
 }
 
+function isSourceFileChecksumsConflict(error: unknown): boolean {
+  if (!(error instanceof InfrastructureError)) {
+    return false;
+  }
+
+  const message = error.message.toLowerCase();
+  return message.includes("(409)") && message.includes("sourcefilechecksums");
+}
+
 // ---------------------------------------------------------------------------
 // Upload orchestration
 // ---------------------------------------------------------------------------
@@ -267,6 +281,7 @@ export interface BuildsUploadResult {
   readonly plannedOperations: readonly string[];
   readonly buildUploadId: string | null;
   readonly finalBuildUploadState: string | null;
+  readonly fallbackUploadMethod?: FallbackUploadMethod;
 }
 
 const DEFAULT_POLL_INTERVAL_MS = 3_000;
@@ -280,6 +295,8 @@ export async function uploadBuild(
     readonly pollIntervalMs?: number;
     readonly pollTimeoutMs?: number;
     readonly processRunner?: ProcessRunner;
+    readonly fallbackUploadCredentials?: FallbackUploadCredentials;
+    readonly fallbackEnv?: NodeJS.ProcessEnv;
   }
 ): Promise<BuildsUploadResult> {
   const sleep =
@@ -312,6 +329,7 @@ export async function uploadBuild(
       `Create build upload file for ${artifact.ipaPath}`,
       "Upload chunks using App Store Connect upload operations",
       "Mark build upload file as uploaded with checksums",
+      "Fallback to xcrun altool/Transporter if checksum marking is rejected",
       input.waitProcessing
         ? "Poll build upload until terminal state"
         : "Fetch current build upload state once"
@@ -355,17 +373,35 @@ export async function uploadBuild(
       );
     }
 
-    await markBuildUploadFileUploaded(client, {
-      buildUploadFileId: buildUploadFile.id,
-      sha256,
-      md5
-    });
+    let fallbackUploadMethod: FallbackUploadMethod | undefined;
 
-    const finalState = input.waitProcessing
-      ? await pollBuildUploadState(client, buildUpload.id, sleep, pollIntervalMs, pollTimeoutMs)
-      : (await getBuildUpload(client, buildUpload.id)).state.state;
+    try {
+      await markBuildUploadFileUploaded(client, {
+        buildUploadFileId: buildUploadFile.id,
+        sha256,
+        md5
+      });
+    } catch (error) {
+      if (!isSourceFileChecksumsConflict(error)) {
+        throw error;
+      }
 
-    if (finalState === "FAILED") {
+      fallbackUploadMethod = await uploadWithXcrunFallback(artifact.ipaPath, {
+        ...(options?.processRunner ? { processRunner: options.processRunner } : {}),
+        ...(options?.fallbackUploadCredentials
+          ? { credentials: options.fallbackUploadCredentials }
+          : {}),
+        ...(options?.fallbackEnv ? { env: options.fallbackEnv } : {})
+      });
+    }
+
+    const finalState = fallbackUploadMethod
+      ? "FALLBACK_SUBMITTED"
+      : input.waitProcessing
+        ? await pollBuildUploadState(client, buildUpload.id, sleep, pollIntervalMs, pollTimeoutMs)
+        : (await getBuildUpload(client, buildUpload.id)).state.state;
+
+    if (!fallbackUploadMethod && finalState === "FAILED") {
       throw new DomainError("Build upload failed in App Store Connect.");
     }
 
@@ -373,8 +409,9 @@ export async function uploadBuild(
       mode: "applied",
       preflightReport,
       plannedOperations,
-      buildUploadId: buildUpload.id,
-      finalBuildUploadState: finalState
+      buildUploadId: fallbackUploadMethod ? null : buildUpload.id,
+      finalBuildUploadState: finalState,
+      ...(fallbackUploadMethod ? { fallbackUploadMethod } : {})
     };
   } finally {
     if (artifact.dispose) {
@@ -576,5 +613,8 @@ function printBuildUploadResult(result: BuildsUploadResult, app: AppSummary): vo
   } else {
     console.log(`Build upload id: ${result.buildUploadId}`);
     console.log(`Final state: ${result.finalBuildUploadState}`);
+    if (result.fallbackUploadMethod) {
+      console.log(`Fallback upload method: ${result.fallbackUploadMethod}`);
+    }
   }
 }
