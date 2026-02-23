@@ -269,4 +269,28 @@ describe("resolveIpaArtifact (xcodebuild signing)", () => {
     expect(generatedPlistPath).toBeTruthy();
     await expect(access(generatedPlistPath!, constants.F_OK)).rejects.toThrow();
   });
+
+  it("fails when explicit export options plist path is unreadable", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "asc-artifact-signing-explicit-bad-plist-"));
+    createdPaths.push(root);
+
+    const { source } = await createXcodebuildSource(root, { includeExportOptions: false });
+    const explicitMissingPlist = path.join(root, "missing", "ExportOptions.plist");
+    const { runner, calls } = createRunner();
+
+    vi.stubEnv("ASC_KEY_ID", "KEY_EXPLICIT_BAD_PLIST");
+    vi.stubEnv("ASC_ISSUER_ID", "ISSUER_EXPLICIT_BAD_PLIST");
+    vi.stubEnv("ASC_KEY_CONTENT", Buffer.from("key").toString("base64"));
+
+    await expect(
+      resolveIpaArtifact(
+        {
+          ...source,
+          exportOptionsPlist: explicitMissingPlist
+        },
+        runner
+      )
+    ).rejects.toThrowError(`Export options plist is not readable: ${explicitMissingPlist}`);
+    expect(calls).toHaveLength(0);
+  });
 });

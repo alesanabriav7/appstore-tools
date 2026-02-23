@@ -181,17 +181,18 @@ export async function resolveOrCreateExportOptionsPlist(
   const explicitPath = providedPath?.trim() ? path.resolve(providedPath) : undefined;
 
   if (explicitPath) {
-    const readable = await access(explicitPath, constants.R_OK)
-      .then(() => true)
-      .catch(() => false);
+    await access(explicitPath, constants.R_OK).catch((error: unknown) => {
+      throw new SigningError(
+        `Export options plist is not readable: ${explicitPath}`,
+        error
+      );
+    });
 
-    if (readable) {
-      return {
-        exportOptionsPlistPath: explicitPath,
-        cleanup: async () => undefined,
-        generated: false
-      };
-    }
+    return {
+      exportOptionsPlistPath: explicitPath,
+      cleanup: async () => undefined,
+      generated: false
+    };
   }
 
   const defaultPath = path.resolve(process.cwd(), "ExportOptions.plist");

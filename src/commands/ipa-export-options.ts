@@ -19,12 +19,6 @@ export async function ipaExportOptionsCommand(
   const signingStyle = command.signingStyle ?? "automatic";
   const teamId = command.teamId?.trim();
 
-  if (signingStyle !== "automatic" && signingStyle !== "manual") {
-    throw new InfrastructureError(
-      `Unsupported signing style: ${signingStyle}. Use automatic or manual.`
-    );
-  }
-
   if (!command.force) {
     const exists = await access(outputPlistPath, constants.F_OK)
       .then(() => true)
