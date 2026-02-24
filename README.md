@@ -52,6 +52,8 @@ Or pass the key inline:
 ASC_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----"
 ```
 
+Note: `ASC_PRIVATE_KEY_PATH` is recommended. For `builds upload`, inline `ASC_PRIVATE_KEY` is written to a temporary `.p8` file for `xcrun altool` and deleted after the command completes.
+
 For xcodebuild archive/generate signing (`ipa generate` and xcodebuild-backed generation):
 
 ```env

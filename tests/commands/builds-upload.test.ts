@@ -1,4 +1,4 @@
-import { writeFile, rm } from "node:fs/promises";
+import { access, readFile, rm, writeFile } from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 
@@ -245,6 +245,7 @@ describe("uploadBuild", () => {
     await writeFile(ipaPath, "dummy ipa bytes");
 
     const xcrunInvocations: string[][] = [];
+    let temporaryPrivateKeyPath: string | null = null;
 
     const client = {
       request: async () => {
@@ -261,6 +262,14 @@ describe("uploadBuild", () => {
       async (args) => {
         xcrunInvocations.push([...args]);
         if (args[0] === "altool") {
+          const p8FilePathFlagIndex = args.indexOf("--p8-file-path");
+          const p8FilePath = args[p8FilePathFlagIndex + 1];
+          if (p8FilePathFlagIndex < 0 || !p8FilePath) {
+            throw new InfrastructureError("Expected --p8-file-path for altool upload.");
+          }
+          temporaryPrivateKeyPath = p8FilePath;
+          const keyFileContent = await readFile(p8FilePath, "utf8");
+          expect(keyFileContent).toContain("-----BEGIN PRIVATE KEY-----");
           return { stdout: "altool upload ok", stderr: "" };
         }
         throw new InfrastructureError("Unexpected xcrun fallback command.");
@@ -297,8 +306,11 @@ describe("uploadBuild", () => {
       expect(result.fallbackUploadMethod).toBeUndefined();
       expect(xcrunInvocations).toHaveLength(1);
       expect(xcrunInvocations[0]).toContain("altool");
-      expect(xcrunInvocations[0]).toContain("--auth-string");
+      expect(xcrunInvocations[0]).toContain("--p8-file-path");
+      expect(xcrunInvocations[0]).not.toContain("--auth-string");
       expect(xcrunInvocations[0]).toContain("--wait");
+      expect(temporaryPrivateKeyPath).not.toBeNull();
+      await expect(access(temporaryPrivateKeyPath!)).rejects.toThrow();
     } finally {
       await rm(ipaPath, { force: true });
     }

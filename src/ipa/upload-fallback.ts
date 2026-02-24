@@ -1,9 +1,12 @@
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import * as os from "node:os";
+import * as path from "node:path";
+
 import { InfrastructureError } from "../api/client.js";
 import { defaultProcessRunner, type ProcessRunner } from "./artifact.js";
 
 export type FallbackUploadMethod =
   | "xcrun altool"
-  | "xcrun iTMSTransporter"
   | "App Store Connect API";
 
 export interface FallbackUploadCredentials {
@@ -11,11 +14,6 @@ export interface FallbackUploadCredentials {
   readonly issuerId: string;
   readonly privateKeyPath?: string;
   readonly privateKey?: string;
-}
-
-export interface FallbackUploadResult {
-  readonly method: FallbackUploadMethod;
-  readonly waitApplied: boolean;
 }
 
 export async function uploadWithXcrunAltool(
@@ -30,48 +28,35 @@ export async function uploadWithXcrunAltool(
   const processRunner = options?.processRunner ?? defaultProcessRunner;
   const credentials = resolveFallbackCredentials(options?.credentials, options?.env);
   const waitForProcessing = options?.waitForProcessing ?? false;
-  const altoolArgs = createAltoolArgs(ipaPath, credentials, waitForProcessing);
+  const materializedCredentials = await materializeAltoolPrivateKey(credentials);
+  let runError: unknown;
 
-  await processRunner.run("xcrun", altoolArgs);
-
-  return {
-    method: "xcrun altool",
-    waitApplied: waitForProcessing
-  };
-}
-
-export async function uploadWithXcrunFallback(
-  ipaPath: string,
-  options?: {
-    readonly processRunner?: ProcessRunner;
-    readonly credentials?: FallbackUploadCredentials;
-    readonly env?: NodeJS.ProcessEnv;
-    readonly waitForProcessing?: boolean;
-  }
-): Promise<FallbackUploadResult> {
   try {
-    return await uploadWithXcrunAltool(ipaPath, options);
-  } catch (altoolError) {
-    const processRunner = options?.processRunner ?? defaultProcessRunner;
-    const credentials = resolveFallbackCredentials(options?.credentials, options?.env);
-    const transporterArgs = createTransporterArgs(ipaPath, credentials);
+    const altoolArgs = createAltoolArgs(
+      ipaPath,
+      materializedCredentials.credentials,
+      waitForProcessing
+    );
 
+    await processRunner.run("xcrun", altoolArgs);
+
+    return {
+      method: "xcrun altool",
+      waitApplied: waitForProcessing
+    };
+  } catch (error) {
+    runError = error;
+    throw error;
+  } finally {
     try {
-      await processRunner.run("xcrun", transporterArgs);
-      return {
-        method: "xcrun iTMSTransporter",
-        waitApplied: false
-      };
-    } catch (transporterError) {
-      throw new InfrastructureError(
-        [
-          "Checksum marking failed and xcrun fallback upload was unsuccessful.",
-          "Tried: xcrun altool, xcrun iTMSTransporter.",
-          `altool error: ${toErrorMessage(altoolError)}`,
-          `transporter error: ${toErrorMessage(transporterError)}`
-        ].join("\n"),
-        transporterError
-      );
+      await materializedCredentials.cleanup();
+    } catch (cleanupError) {
+      if (!runError) {
+        throw new InfrastructureError(
+          "Failed to clean up temporary private key file for altool upload.",
+          cleanupError
+        );
+      }
     }
   }
 }
@@ -123,11 +108,6 @@ function createAltoolArgs(
 
   if (credentials.privateKeyPath) {
     args.push("--p8-file-path", credentials.privateKeyPath);
-    return args;
-  }
-
-  if (credentials.privateKey) {
-    args.push("--auth-string", toAuthString(credentials.privateKey));
   }
 
   if (waitForProcessing) {
@@ -137,34 +117,44 @@ function createAltoolArgs(
   return args;
 }
 
-function createTransporterArgs(
-  ipaPath: string,
+async function materializeAltoolPrivateKey(
   credentials: FallbackUploadCredentials
-): string[] {
-  return [
-    "iTMSTransporter",
-    "-m",
-    "upload",
-    "-assetFile",
-    ipaPath,
-    "-apiKey",
-    credentials.keyId,
-    "-apiIssuer",
-    credentials.issuerId
-  ];
-}
-
-function toErrorMessage(error: unknown): string {
-  if (error instanceof Error) {
-    return error.message;
+): Promise<{
+  readonly credentials: FallbackUploadCredentials;
+  readonly cleanup: () => Promise<void>;
+}> {
+  if (credentials.privateKeyPath || !credentials.privateKey) {
+    return {
+      credentials,
+      cleanup: async () => undefined
+    };
   }
 
-  return String(error);
+  const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "asc-altool-key-"));
+  const tempPrivateKeyPath = path.join(tempDirectory, `AuthKey_${credentials.keyId}.p8`);
+  const normalizedPrivateKey = normalizePrivateKey(credentials.privateKey);
+
+  await writeFile(tempPrivateKeyPath, normalizedPrivateKey, {
+    encoding: "utf8",
+    mode: 0o600
+  });
+
+  return {
+    credentials: {
+      keyId: credentials.keyId,
+      issuerId: credentials.issuerId,
+      privateKeyPath: tempPrivateKeyPath
+    },
+    cleanup: async () => {
+      await rm(tempDirectory, { recursive: true, force: true });
+    }
+  };
 }
 
-function toAuthString(privateKey: string): string {
-  return privateKey
-    .replace(/-----BEGIN PRIVATE KEY-----/g, "")
-    .replace(/-----END PRIVATE KEY-----/g, "")
-    .replace(/\s+/g, "");
+function normalizePrivateKey(privateKey: string): string {
+  const normalized = privateKey.includes("\\n")
+    ? privateKey.replace(/\\n/g, "\n")
+    : privateKey;
+
+  return normalized.endsWith("\n") ? normalized : `${normalized}\n`;
 }
