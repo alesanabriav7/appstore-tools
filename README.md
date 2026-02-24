@@ -52,6 +52,8 @@ Or pass the key inline:
 ASC_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----"
 ```
 
+Note: `ASC_PRIVATE_KEY_PATH` is recommended. For `builds upload`, inline `ASC_PRIVATE_KEY` is written to a temporary `.p8` file for `xcrun altool` and deleted after the command completes.
+
 For xcodebuild archive/generate signing (`ipa generate` and xcodebuild-backed generation):
 
 ```env
@@ -257,6 +259,8 @@ Every upload runs these checks before touching App Store Connect:
 - Bundle ID, version, and build number match expectations
 - Code signing is valid (`codesign --verify --strict --deep`)
 - SHA-256 and MD5 checksums computed
+
+The CLI now attempts upload with `xcrun altool` first. If that primary upload fails (for example, missing local Xcode tooling/credentials), it automatically falls back to the App Store Connect upload API flow (`buildUploads` + `buildUploadFiles` + checksum marking/polling).
 
 ### Help
 

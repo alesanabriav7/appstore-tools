@@ -11,6 +11,11 @@ import {
 import { resolveIpaArtifact, type IpaSource, type ProcessRunner } from "../ipa/artifact.js";
 import { autoDetectIpaSource } from "../ipa/autodetect.js";
 import { verifyIpa } from "../ipa/preflight.js";
+import {
+  uploadWithXcrunAltool,
+  type FallbackUploadCredentials,
+  type FallbackUploadMethod
+} from "../ipa/upload-fallback.js";
 import { listApps, type AppSummary } from "./apps-list.js";
 
 // ---------------------------------------------------------------------------
@@ -73,6 +78,18 @@ interface BuildUploadSummary {
 interface BuildUploadFileSummary {
   readonly id: string;
   readonly uploadOperations: readonly UploadOperation[];
+}
+
+interface AscApiErrorItem {
+  readonly status?: string;
+  readonly code?: string;
+  readonly source?: {
+    readonly pointer?: string;
+  };
+}
+
+interface AscApiErrorResponse {
+  readonly errors?: readonly AscApiErrorItem[];
 }
 
 // ---------------------------------------------------------------------------
@@ -236,6 +253,38 @@ async function getBuildUpload(
   return mapBuildUpload(response.data);
 }
 
+function isSourceFileChecksumsConflict(error: unknown): boolean {
+  if (!(error instanceof InfrastructureError)) {
+    return false;
+  }
+
+  if (error.details?.statusCode === 409) {
+    const responseJson = error.details.responseJson;
+    if (isAscApiErrorResponse(responseJson)) {
+      return responseJson.errors?.some((item) => {
+        if (item.status !== "409") {
+          return false;
+        }
+
+        const pointer = item.source?.pointer?.toLowerCase();
+        return pointer?.includes("sourcefilechecksums") ?? false;
+      }) ?? false;
+    }
+  }
+
+  // Backward-compatible fallback for manually-constructed errors in tests/callers.
+  const message = error.message.toLowerCase();
+  return message.includes("(409)") && message.includes("sourcefilechecksums");
+}
+
+function isAscApiErrorResponse(value: unknown): value is AscApiErrorResponse {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+
+  return Array.isArray((value as { readonly errors?: unknown }).errors);
+}
+
 // ---------------------------------------------------------------------------
 // Upload orchestration
 // ---------------------------------------------------------------------------
@@ -267,6 +316,8 @@ export interface BuildsUploadResult {
   readonly plannedOperations: readonly string[];
   readonly buildUploadId: string | null;
   readonly finalBuildUploadState: string | null;
+  readonly fallbackUploadMethod?: FallbackUploadMethod;
+  readonly fallbackStatusNote?: string;
 }
 
 const DEFAULT_POLL_INTERVAL_MS = 3_000;
@@ -280,6 +331,8 @@ export async function uploadBuild(
     readonly pollIntervalMs?: number;
     readonly pollTimeoutMs?: number;
     readonly processRunner?: ProcessRunner;
+    readonly fallbackUploadCredentials?: FallbackUploadCredentials;
+    readonly fallbackEnv?: NodeJS.ProcessEnv;
   }
 ): Promise<BuildsUploadResult> {
   const sleep =
@@ -308,13 +361,15 @@ export async function uploadBuild(
     }
 
     const plannedOperations = [
+      "Upload IPA using xcrun altool",
+      "Fallback to App Store Connect upload operations if altool fails",
       `Create build upload for app ${input.appId}`,
       `Create build upload file for ${artifact.ipaPath}`,
       "Upload chunks using App Store Connect upload operations",
       "Mark build upload file as uploaded with checksums",
       input.waitProcessing
-        ? "Poll build upload until terminal state"
-        : "Fetch current build upload state once"
+        ? "Poll build upload until terminal state (API fallback path)"
+        : "Fetch current build upload state once (API fallback path)"
     ] as const;
 
     if (!input.apply) {
@@ -325,6 +380,29 @@ export async function uploadBuild(
         buildUploadId: null,
         finalBuildUploadState: null
       };
+    }
+
+    try {
+      const altoolUpload = await uploadWithXcrunAltool(artifact.ipaPath, {
+        ...(options?.processRunner ? { processRunner: options.processRunner } : {}),
+        ...(options?.fallbackUploadCredentials
+          ? { credentials: options.fallbackUploadCredentials }
+          : {}),
+        ...(options?.fallbackEnv ? { env: options.fallbackEnv } : {}),
+        waitForProcessing: input.waitProcessing
+      });
+
+      return {
+        mode: "applied",
+        preflightReport,
+        plannedOperations,
+        buildUploadId: null,
+        finalBuildUploadState: altoolUpload.waitApplied
+          ? "ALTOOL_WAIT_COMPLETED"
+          : "ALTOOL_SUBMITTED"
+      };
+    } catch {
+      // Fall through to API-based upload flow.
     }
 
     const buildUpload = await createBuildUpload(client, {
@@ -355,11 +433,21 @@ export async function uploadBuild(
       );
     }
 
-    await markBuildUploadFileUploaded(client, {
-      buildUploadFileId: buildUploadFile.id,
-      sha256,
-      md5
-    });
+    try {
+      await markBuildUploadFileUploaded(client, {
+        buildUploadFileId: buildUploadFile.id,
+        sha256,
+        md5
+      });
+    } catch (error) {
+      if (!isSourceFileChecksumsConflict(error)) {
+        throw error;
+      }
+
+      throw new DomainError(
+        "App Store Connect API fallback rejected sourceFileChecksums while marking build upload file."
+      );
+    }
 
     const finalState = input.waitProcessing
       ? await pollBuildUploadState(client, buildUpload.id, sleep, pollIntervalMs, pollTimeoutMs)
@@ -374,7 +462,8 @@ export async function uploadBuild(
       preflightReport,
       plannedOperations,
       buildUploadId: buildUpload.id,
-      finalBuildUploadState: finalState
+      finalBuildUploadState: finalState,
+      fallbackUploadMethod: "App Store Connect API"
     };
   } finally {
     if (artifact.dispose) {
@@ -576,5 +665,11 @@ function printBuildUploadResult(result: BuildsUploadResult, app: AppSummary): vo
   } else {
     console.log(`Build upload id: ${result.buildUploadId}`);
     console.log(`Final state: ${result.finalBuildUploadState}`);
+    if (result.fallbackUploadMethod) {
+      console.log(`Fallback upload method: ${result.fallbackUploadMethod}`);
+    }
+    if (result.fallbackStatusNote) {
+      console.log(`Fallback status note: ${result.fallbackStatusNote}`);
+    }
   }
 }

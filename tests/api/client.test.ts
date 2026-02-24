@@ -179,10 +179,20 @@ describe("AppStoreConnectClient", () => {
         },
         {
           fetchLike: async () =>
-            new Response(JSON.stringify({ error: "forbidden" }), {
-              status: 403,
-              statusText: "Forbidden"
-            })
+            new Response(
+              JSON.stringify({
+                errors: [
+                  {
+                    status: "403",
+                    source: { pointer: "/data/attributes/demo" }
+                  }
+                ]
+              }),
+              {
+                status: 403,
+                statusText: "Forbidden"
+              }
+            )
         }
       );
 
@@ -191,7 +201,34 @@ describe("AppStoreConnectClient", () => {
           method: "GET",
           path: "/v1/apps"
         })
-      ).rejects.toThrowError(InfrastructureError);
+      ).rejects.toMatchObject({
+        name: "InfrastructureError",
+        details: {
+          statusCode: 403
+        }
+      });
+
+      await client
+        .request({
+          method: "GET",
+          path: "/v1/apps"
+        })
+        .then(() => {
+          throw new Error("Expected request to fail.");
+        })
+        .catch((error) => {
+          expect(error).toBeInstanceOf(InfrastructureError);
+          const infrastructureError = error as InfrastructureError;
+          expect(infrastructureError.details?.statusCode).toBe(403);
+          expect(infrastructureError.details?.responseJson).toEqual({
+            errors: [
+              {
+                status: "403",
+                source: { pointer: "/data/attributes/demo" }
+              }
+            ]
+          });
+        });
     });
   });
 });

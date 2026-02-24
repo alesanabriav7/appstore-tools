@@ -13,11 +13,27 @@ export class DomainError extends Error {
 
 export class InfrastructureError extends Error {
   public override readonly cause?: unknown;
+  public readonly details:
+    | {
+        readonly statusCode?: number;
+        readonly responseBody?: string;
+        readonly responseJson?: unknown;
+      }
+    | undefined;
 
-  public constructor(message: string, cause?: unknown) {
+  public constructor(
+    message: string,
+    cause?: unknown,
+    details?: {
+      readonly statusCode?: number;
+      readonly responseBody?: string;
+      readonly responseJson?: unknown;
+    }
+  ) {
     super(message);
     this.name = "InfrastructureError";
     this.cause = cause;
+    this.details = details;
   }
 }
 
@@ -159,8 +175,15 @@ export class AppStoreConnectClient {
 
     if (!response.ok) {
       const errorBody = await safeReadText(response);
+      const parsedErrorBody = tryParseJson(errorBody);
       throw new InfrastructureError(
-        `App Store Connect request failed (${response.status}): ${errorBody || response.statusText}`
+        `App Store Connect request failed (${response.status}): ${errorBody || response.statusText}`,
+        undefined,
+        {
+          statusCode: response.status,
+          ...(errorBody ? { responseBody: errorBody } : {}),
+          ...(parsedErrorBody ? { responseJson: parsedErrorBody } : {})
+        }
       );
     }
 
@@ -313,5 +336,17 @@ export async function safeReadText(response: Response): Promise<string> {
     return await response.text();
   } catch {
     return "";
+  }
+}
+
+function tryParseJson(value: string): unknown {
+  if (!value.trim()) {
+    return undefined;
+  }
+
+  try {
+    return JSON.parse(value);
+  } catch {
+    return undefined;
   }
 }
