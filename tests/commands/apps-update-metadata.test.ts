@@ -1,4 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { Readable } from "node:stream";
+
+import { describe, expect, it, vi } from "vitest";
 
 import { updateMetadata, type MetadataUpdateInput } from "../../src/commands/apps-update-metadata.js";
 import {
@@ -7,6 +9,30 @@ import {
   type HttpRequest,
   type HttpResponse
 } from "../../src/api/client.js";
+
+vi.mock("node:fs", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs")>();
+  return {
+    ...actual,
+    createReadStream: vi.fn()
+  };
+});
+
+vi.mock("node:fs/promises", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs/promises")>();
+  return {
+    ...actual,
+    stat: vi.fn()
+  };
+});
+
+vi.mock("../../src/api/types.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../src/api/types.js")>();
+  return {
+    ...actual,
+    executeUploadOperations: vi.fn().mockResolvedValue(undefined)
+  };
+});
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -72,7 +98,7 @@ function createMockClient(options?: {
       }
 
       // GET localizations
-      if (request.method === "GET" && request.path.includes("/appStoreVersionLocalizations")) {
+      if (request.method === "GET" && request.path.includes("/appStoreVersionLocalizations") && !request.path.includes("/appScreenshotSets")) {
         return {
           status: 200,
           headers: new Headers(),
@@ -388,6 +414,138 @@ describe("updateMetadata", () => {
     expect(result.plannedOperations).toContainEqual(
       expect.stringContaining("1 screenshot(s) for en-US [APP_IPAD_PRO_129]")
     );
+  });
+
+  it("screenshot upload flow deletes old, creates new, uploads, and commits", async () => {
+    const { createReadStream } = await import("node:fs");
+    const { stat } = await import("node:fs/promises");
+    const mockedStat = vi.mocked(stat);
+    const mockedCreateReadStream = vi.mocked(createReadStream);
+
+    mockedStat.mockResolvedValue({ size: 12345 } as Awaited<ReturnType<typeof stat>>);
+
+    mockedCreateReadStream.mockImplementation(() => {
+      const stream = new Readable({
+        read() {
+          this.push(Buffer.from("fake-screenshot-data"));
+          this.push(null);
+        }
+      });
+      return stream as ReturnType<typeof createReadStream>;
+    });
+
+    const { client, requests } = createMockClient({
+      screenshotSets: [
+        {
+          id: "set-iphone",
+          screenshotDisplayType: "APP_IPHONE_67",
+          screenshots: ["old-ss-1", "old-ss-2"]
+        }
+      ]
+    });
+
+    const result = await updateMetadata(
+      client,
+      baseInput({
+        apply: true,
+        screenshotsOnly: true,
+        manifest: {
+          "en-US": {
+            screenshots: {
+              APP_IPHONE_67: ["./screenshots/new1.png", "./screenshots/new2.png"]
+            }
+          }
+        }
+      })
+    );
+
+    expect(result.mode).toBe("applied");
+    expect(result.screenshotSetsProcessed).toBe(1);
+    expect(result.screenshotsUploaded).toBe(2);
+
+    // Verify old screenshots were deleted
+    const deleteRequests = requests.filter(
+      (r) => r.method === "DELETE" && r.path.includes("/appScreenshots/")
+    );
+    expect(deleteRequests).toHaveLength(2);
+    expect(deleteRequests.map((r) => r.path)).toContainEqual("/v1/appScreenshots/old-ss-1");
+    expect(deleteRequests.map((r) => r.path)).toContainEqual("/v1/appScreenshots/old-ss-2");
+
+    // Verify new screenshots were created (POST /v1/appScreenshots)
+    const createRequests = requests.filter(
+      (r) => r.method === "POST" && r.path === "/v1/appScreenshots"
+    );
+    expect(createRequests).toHaveLength(2);
+
+    // Verify screenshots were committed (PATCH /v1/appScreenshots/{id})
+    const commitRequests = requests.filter(
+      (r) => r.method === "PATCH" && r.path.includes("/appScreenshots/")
+    );
+    expect(commitRequests).toHaveLength(2);
+    for (const req of commitRequests) {
+      const body = req.body as { data: { attributes: { uploaded: boolean; sourceFileChecksum: string } } };
+      expect(body.data.attributes.uploaded).toBe(true);
+      expect(body.data.attributes.sourceFileChecksum).toBeTruthy();
+    }
+
+    // No text localization mutations
+    const textPatches = requests.filter(
+      (r) => r.method === "PATCH" && r.path.includes("/appStoreVersionLocalizations/")
+    );
+    expect(textPatches).toHaveLength(0);
+  });
+
+  it("creates new screenshot set when display type does not exist", async () => {
+    const { createReadStream } = await import("node:fs");
+    const { stat } = await import("node:fs/promises");
+    const mockedStat = vi.mocked(stat);
+    const mockedCreateReadStream = vi.mocked(createReadStream);
+
+    mockedStat.mockResolvedValue({ size: 5000 } as Awaited<ReturnType<typeof stat>>);
+
+    mockedCreateReadStream.mockImplementation(() => {
+      const stream = new Readable({
+        read() {
+          this.push(Buffer.from("data"));
+          this.push(null);
+        }
+      });
+      return stream as ReturnType<typeof createReadStream>;
+    });
+
+    const { client, requests } = createMockClient({
+      screenshotSets: []
+    });
+
+    const result = await updateMetadata(
+      client,
+      baseInput({
+        apply: true,
+        screenshotsOnly: true,
+        manifest: {
+          "en-US": {
+            screenshots: {
+              APP_IPAD_PRO_129: ["./ipad.png"]
+            }
+          }
+        }
+      })
+    );
+
+    expect(result.screenshotSetsProcessed).toBe(1);
+    expect(result.screenshotsUploaded).toBe(1);
+
+    // Verify new set was created
+    const createSetRequests = requests.filter(
+      (r) => r.method === "POST" && r.path === "/v1/appScreenshotSets"
+    );
+    expect(createSetRequests).toHaveLength(1);
+
+    // No deletes since set was new
+    const deleteRequests = requests.filter(
+      (r) => r.method === "DELETE" && r.path.includes("/appScreenshots/")
+    );
+    expect(deleteRequests).toHaveLength(0);
   });
 
   it("picks editable version from multiple versions", async () => {
