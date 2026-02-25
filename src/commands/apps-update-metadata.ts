@@ -343,6 +343,52 @@ async function commitScreenshot(
 // Helpers
 // ---------------------------------------------------------------------------
 
+const TEXT_FIELDS = ["description", "keywords", "promotionalText", "supportUrl", "marketingUrl"] as const;
+
+export function validateManifest(value: unknown): MetadataManifest {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new DomainError("Invalid manifest: top-level value must be a JSON object.");
+  }
+
+  const obj = value as Record<string, unknown>;
+
+  for (const [locale, localeValue] of Object.entries(obj)) {
+    if (typeof localeValue !== "object" || localeValue === null || Array.isArray(localeValue)) {
+      throw new DomainError(`Invalid manifest: locale "${locale}" must be a JSON object.`);
+    }
+
+    const localeObj = localeValue as Record<string, unknown>;
+
+    for (const field of TEXT_FIELDS) {
+      if (field in localeObj && typeof localeObj[field] !== "string") {
+        throw new DomainError(
+          `Invalid manifest: locale "${locale}" field "${field}" must be a string.`
+        );
+      }
+    }
+
+    if ("screenshots" in localeObj) {
+      const screenshots = localeObj.screenshots;
+
+      if (typeof screenshots !== "object" || screenshots === null || Array.isArray(screenshots)) {
+        throw new DomainError(
+          `Invalid manifest: locale "${locale}" field "screenshots" must be a JSON object.`
+        );
+      }
+
+      for (const [displayType, paths] of Object.entries(screenshots as Record<string, unknown>)) {
+        if (!Array.isArray(paths) || !paths.every((p) => typeof p === "string")) {
+          throw new DomainError(
+            `Invalid manifest: locale "${locale}" screenshots["${displayType}"] must be an array of file paths.`
+          );
+        }
+      }
+    }
+  }
+
+  return value as MetadataManifest;
+}
+
 function extractTextFields(locale: MetadataLocale): Record<string, string> {
   const fields: Record<string, string> = {};
 
@@ -420,6 +466,10 @@ export async function updateMetadata(
     if (loc.attributes.locale) {
       localeToId.set(loc.attributes.locale, loc.id);
     }
+  }
+
+  if (input.textOnly && input.screenshotsOnly) {
+    throw new Error("--text-only and --screenshots-only are mutually exclusive");
   }
 
   // Plan text operations
@@ -626,7 +676,7 @@ export async function appsUpdateMetadataCommand(
   let manifest: MetadataManifest;
 
   try {
-    manifest = JSON.parse(manifestContent) as MetadataManifest;
+    manifest = validateManifest(JSON.parse(manifestContent));
   } catch (error) {
     throw new DomainError(`Invalid JSON in metadata manifest: ${(error as Error).message}`);
   }

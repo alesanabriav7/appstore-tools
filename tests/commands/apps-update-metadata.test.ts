@@ -2,7 +2,7 @@ import { Readable } from "node:stream";
 
 import { describe, expect, it, vi } from "vitest";
 
-import { updateMetadata, type MetadataUpdateInput } from "../../src/commands/apps-update-metadata.js";
+import { updateMetadata, validateManifest, type MetadataUpdateInput } from "../../src/commands/apps-update-metadata.js";
 import {
   DomainError,
   type AppStoreConnectClient,
@@ -205,6 +205,64 @@ function baseInput(overrides?: Partial<MetadataUpdateInput>): MetadataUpdateInpu
 // Tests
 // ---------------------------------------------------------------------------
 
+describe("validateManifest", () => {
+  it("rejects an array as top-level value", () => {
+    expect(() => validateManifest([{ "en-US": {} }])).toThrow(
+      "Invalid manifest: top-level value must be a JSON object."
+    );
+  });
+
+  it("rejects a locale value that is a string", () => {
+    expect(() => validateManifest({ "en-US": "bad" })).toThrow(
+      'Invalid manifest: locale "en-US" must be a JSON object.'
+    );
+  });
+
+  it("rejects a text field that is a number", () => {
+    expect(() => validateManifest({ "en-US": { description: 42 } })).toThrow(
+      'Invalid manifest: locale "en-US" field "description" must be a string.'
+    );
+  });
+
+  it("rejects screenshots as a string", () => {
+    expect(() => validateManifest({ "en-US": { screenshots: "bad" } })).toThrow(
+      'Invalid manifest: locale "en-US" field "screenshots" must be a JSON object.'
+    );
+  });
+
+  it("rejects a screenshot display type mapped to a string", () => {
+    expect(() =>
+      validateManifest({ "en-US": { screenshots: { APP_IPHONE_67: "not-array" } } })
+    ).toThrow(
+      'Invalid manifest: locale "en-US" screenshots["APP_IPHONE_67"] must be an array of file paths.'
+    );
+  });
+
+  it("rejects screenshot array containing non-strings", () => {
+    expect(() =>
+      validateManifest({ "en-US": { screenshots: { APP_IPHONE_67: [123] } } })
+    ).toThrow(
+      'Invalid manifest: locale "en-US" screenshots["APP_IPHONE_67"] must be an array of file paths.'
+    );
+  });
+
+  it("accepts a valid manifest", () => {
+    const manifest = validateManifest({
+      "en-US": {
+        description: "Hello",
+        screenshots: { APP_IPHONE_67: ["./s1.png"] }
+      }
+    });
+
+    expect(manifest).toEqual({
+      "en-US": {
+        description: "Hello",
+        screenshots: { APP_IPHONE_67: ["./s1.png"] }
+      }
+    });
+  });
+});
+
 describe("updateMetadata", () => {
   it("dry-run returns planned operations without mutations", async () => {
     const { client, requests } = createMockClient();
@@ -323,6 +381,22 @@ describe("updateMetadata", () => {
       (r) => r.method === "PATCH" && r.path.includes("/appStoreVersionLocalizations/")
     );
     expect(patchLocalizations).toHaveLength(0);
+  });
+
+  it("errors when both --text-only and --screenshots-only are provided", async () => {
+    const { client } = createMockClient();
+
+    await expect(
+      updateMetadata(
+        client,
+        baseInput({
+          apply: true,
+          textOnly: true,
+          screenshotsOnly: true,
+          manifest: { "en-US": { description: "Test" } }
+        })
+      )
+    ).rejects.toThrow("--text-only and --screenshots-only are mutually exclusive");
   });
 
   it("errors on no editable version found", async () => {
