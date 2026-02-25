@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 import { updateMetadata, validateManifest, type MetadataUpdateInput } from "../../src/commands/apps-update-metadata.js";
 import {
   DomainError,
+  InfrastructureError,
   type AppStoreConnectClient,
   type HttpRequest,
   type HttpResponse
@@ -268,7 +269,7 @@ function createMockClient(options?: {
             }
           } as HttpResponse<T>;
         }
-        throw new Error("Not found");
+        throw new InfrastructureError("Not found", undefined, { statusCode: 404 });
       }
 
       // POST appStoreReviewDetails

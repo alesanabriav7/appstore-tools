@@ -524,9 +524,12 @@ async function getAppStoreReviewDetail(
     });
 
     return response.data;
-  } catch {
-    // 404 means no review detail exists yet
-    return null;
+  } catch (error) {
+    if (error instanceof InfrastructureError && error.details?.statusCode === 404) {
+      return null;
+    }
+
+    throw error;
   }
 }
 
