@@ -533,9 +533,9 @@ export async function updateMetadata(
         // Delete existing screenshots in this set
         const existingScreenshots = displayTypeToScreenshots.get(displayType) ?? [];
 
-        for (const screenshotId of existingScreenshots) {
-          await deleteScreenshot(client, screenshotId);
-        }
+        await Promise.all(
+          existingScreenshots.map((screenshotId) => deleteScreenshot(client, screenshotId))
+        );
 
         // Upload new screenshots
         for (const filePath of files) {
