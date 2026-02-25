@@ -1120,34 +1120,25 @@ export async function updateMetadata(
       copyrightUpdated = true;
     }
 
-    // Category — PATCH appInfo with relationship
-    if (appMeta.primaryCategory) {
-      if (!appInfoId) {
-        const appInfos = await getAppInfos(client, input.appId);
+    // Resolve appInfoId once for category and age rating
+    if ((appMeta.primaryCategory || appMeta.ageRating) && !appInfoId) {
+      const appInfos = await getAppInfos(client, input.appId);
 
-        if (appInfos.data.length === 0) {
-          throw new DomainError("No appInfo found for this app.");
-        }
-
-        appInfoId = appInfos.data[0]!.id;
+      if (appInfos.data.length === 0) {
+        throw new DomainError("No appInfo found for this app.");
       }
 
+      appInfoId = appInfos.data[0]!.id;
+    }
+
+    // Category — PATCH appInfo with relationship
+    if (appMeta.primaryCategory && appInfoId) {
       await updateAppInfoCategory(client, appInfoId, appMeta.primaryCategory);
       categoryUpdated = true;
     }
 
     // Age rating — GET declaration → PATCH
-    if (appMeta.ageRating) {
-      if (!appInfoId) {
-        const appInfos = await getAppInfos(client, input.appId);
-
-        if (appInfos.data.length === 0) {
-          throw new DomainError("No appInfo found for this app.");
-        }
-
-        appInfoId = appInfos.data[0]!.id;
-      }
-
+    if (appMeta.ageRating && appInfoId) {
       const ageRatingDecl = await getAgeRatingDeclaration(client, appInfoId);
       await updateAgeRatingDeclaration(client, ageRatingDecl.data.id, { ...appMeta.ageRating });
       ageRatingUpdated = true;
