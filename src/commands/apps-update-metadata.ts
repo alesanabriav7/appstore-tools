@@ -538,21 +538,23 @@ export async function updateMetadata(
         );
 
         // Upload new screenshots
-        for (const filePath of files) {
-          const resolvedPath = resolve(manifestBasePath, filePath);
-          const fileStat = await stat(resolvedPath);
-          const fileName = basename(resolvedPath);
+        await Promise.all(
+          files.map(async (filePath) => {
+            const resolvedPath = resolve(manifestBasePath, filePath);
+            const fileStat = await stat(resolvedPath);
+            const fileName = basename(resolvedPath);
 
-          const screenshot = await createScreenshot(client, setId, fileName, fileStat.size);
+            const screenshot = await createScreenshot(client, setId, fileName, fileStat.size);
 
-          await executeUploadOperations(resolvedPath, screenshot.uploadOperations);
+            await executeUploadOperations(resolvedPath, screenshot.uploadOperations);
 
-          const fileContent = await readFile(resolvedPath);
-          const md5 = createHash("md5").update(fileContent).digest("hex");
+            const fileContent = await readFile(resolvedPath);
+            const md5 = createHash("md5").update(fileContent).digest("hex");
 
-          await commitScreenshot(client, screenshot.id, md5);
-          screenshotsUploaded += 1;
-        }
+            await commitScreenshot(client, screenshot.id, md5);
+            screenshotsUploaded += 1;
+          })
+        );
 
         screenshotSetsProcessed += 1;
       }
