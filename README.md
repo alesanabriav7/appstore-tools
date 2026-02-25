@@ -201,6 +201,71 @@ npx appstore-tools certificates create \
   --json
 ```
 
+### Update metadata
+
+Update App Store listing text and screenshots from a JSON manifest.
+
+Dry-run by default (no mutations):
+
+```bash
+npx appstore-tools apps update-metadata --app com.example.myapp --metadata ./metadata.json
+```
+
+Apply changes:
+
+```bash
+npx appstore-tools apps update-metadata --app com.example.myapp --metadata ./metadata.json --apply
+```
+
+Optional flags:
+
+```bash
+npx appstore-tools apps update-metadata \
+  --app com.example.myapp \
+  --metadata ./metadata.json \
+  --version 2.0.0 \
+  --platform IOS \
+  --text-only \
+  --json \
+  --apply
+```
+
+- `--text-only` — skip screenshot uploads, only update text fields
+- `--screenshots-only` — skip text updates, only upload screenshots
+- `--version` — target a specific version (defaults to the latest editable version)
+- `--platform` — `IOS` (default) or `MAC_OS`
+
+#### Manifest format
+
+The manifest is a JSON object keyed by locale. Each locale can contain text fields and/or a `screenshots` object:
+
+```json
+{
+  "en-US": {
+    "description": "The best app for doing things.",
+    "keywords": "productivity, tools, utilities",
+    "promotionalText": "Now with dark mode!",
+    "supportUrl": "https://example.com/support",
+    "marketingUrl": "https://example.com",
+    "screenshots": {
+      "APP_IPHONE_67": [
+        "./screenshots/en-US/iphone67/01_home.png",
+        "./screenshots/en-US/iphone67/02_detail.png"
+      ],
+      "APP_IPAD_PRO_129": [
+        "./screenshots/en-US/ipad/01_home.png"
+      ]
+    }
+  },
+  "es-MX": {
+    "description": "La mejor app para hacer cosas.",
+    "keywords": "productividad, herramientas"
+  }
+}
+```
+
+All text fields are optional. Screenshot keys are App Store Connect display types (e.g., `APP_IPHONE_67`, `APP_IPAD_PRO_129`). File paths are resolved relative to the manifest file location.
+
 ### Upload build
 
 Dry-run by default (no mutations):
@@ -309,6 +374,7 @@ src/
     types.ts         # Shared upload operation types
   commands/
     apps-list.ts     # apps list command
+    apps-update-metadata.ts # apps update-metadata command
     builds-upload.ts # builds upload command
     certificates-create.ts # certificate create command
     ipa-generate.ts  # ipa generate command
