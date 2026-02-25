@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { createReadStream } from "node:fs";
 import { readFile, stat } from "node:fs/promises";
 import { basename, resolve, dirname } from "node:path";
 
@@ -371,6 +372,17 @@ function findEditableVersion(
   return null;
 }
 
+function computeMd5(filePath: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const hash = createHash("md5");
+    const stream = createReadStream(filePath);
+
+    stream.on("data", (chunk) => hash.update(chunk));
+    stream.on("end", () => resolve(hash.digest("hex")));
+    stream.on("error", reject);
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Orchestration
 // ---------------------------------------------------------------------------
@@ -548,8 +560,7 @@ export async function updateMetadata(
 
             await executeUploadOperations(resolvedPath, screenshot.uploadOperations);
 
-            const fileContent = await readFile(resolvedPath);
-            const md5 = createHash("md5").update(fileContent).digest("hex");
+            const md5 = await computeMd5(resolvedPath);
 
             await commitScreenshot(client, screenshot.id, md5);
             screenshotsUploaded += 1;
