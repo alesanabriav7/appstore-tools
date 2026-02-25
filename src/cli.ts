@@ -8,6 +8,7 @@ import { AppStoreConnectClient, InfrastructureError } from "./api/client.js";
 import type { IpaSource } from "./ipa/artifact.js";
 import { resolveAscKeyIdFromEnvironment } from "./asc/key-id.js";
 import { appsListCommand } from "./commands/apps-list.js";
+import { appsUpdateMetadataCommand } from "./commands/apps-update-metadata.js";
 import { buildsUploadCommand } from "./commands/builds-upload.js";
 import { certificatesCreateCommand } from "./commands/certificates-create.js";
 import { ipaExportOptionsCommand } from "./commands/ipa-export-options.js";
@@ -122,6 +123,18 @@ export interface BuildsUploadCliCommand {
   readonly ipaSource?: IpaSource;
 }
 
+export interface AppsUpdateMetadataCliCommand {
+  readonly kind: "apps-update-metadata";
+  readonly json: boolean;
+  readonly apply: boolean;
+  readonly appReference: string;
+  readonly metadataPath: string;
+  readonly version?: string;
+  readonly platform: "IOS" | "MAC_OS";
+  readonly textOnly: boolean;
+  readonly screenshotsOnly: boolean;
+}
+
 export interface CertificatesCreateCliCommand {
   readonly kind: "certificates-create";
   readonly json: boolean;
@@ -138,6 +151,7 @@ export interface HelpCliCommand {
 
 export type CliCommand =
   | AppsListCliCommand
+  | AppsUpdateMetadataCliCommand
   | IpaGenerateCliCommand
   | IpaExportOptionsCliCommand
   | BuildsUploadCliCommand
@@ -158,6 +172,11 @@ export function parseCliCommand(argv: readonly string[]): CliCommand {
   if (head === "apps" && next === "list") {
     const flags = parseFlags(rest);
     return { kind: "apps-list", json: flags.booleans.has("json") };
+  }
+
+  if (head === "apps" && next === "update-metadata") {
+    const flags = parseFlags(rest);
+    return parseAppsUpdateMetadataCommand(flags);
   }
 
   if (head === "builds" && next === "upload") {
@@ -253,6 +272,31 @@ function parseCertificatesCreateCommand(flags: ParsedFlags): CertificatesCreateC
     ...(commonName ? { commonName } : {}),
     ...(outputDir ? { outputDir } : {}),
     ...(keychainPath ? { keychainPath } : {})
+  };
+}
+
+function parseAppsUpdateMetadataCommand(flags: ParsedFlags): AppsUpdateMetadataCliCommand {
+  const metadataPath = requireFlag(flags, "metadata");
+  const appReference = requireFlag(flags, "app");
+  const version = normalizeOptionalFlag(flags.values.version);
+  const platformRaw = normalizeOptionalFlag(flags.values.platform) ?? "IOS";
+
+  if (platformRaw !== "IOS" && platformRaw !== "MAC_OS") {
+    throw new InfrastructureError(
+      "Invalid --platform. Allowed values: IOS, MAC_OS."
+    );
+  }
+
+  return {
+    kind: "apps-update-metadata",
+    json: flags.booleans.has("json"),
+    apply: flags.booleans.has("apply"),
+    appReference,
+    metadataPath,
+    textOnly: flags.booleans.has("text-only"),
+    screenshotsOnly: flags.booleans.has("screenshots-only"),
+    ...(version ? { version } : {}),
+    platform: platformRaw
   };
 }
 
@@ -430,6 +474,7 @@ Usage:
   appstore-tools apps list [--json]
   appstore-tools ipa generate [--output-ipa <path>] [xcodebuild/custom options] [--json]
   appstore-tools ipa export-options [--output-plist <path>] [--team-id <id>] [--signing-style <automatic|manual>] [--force] [--json]
+  appstore-tools apps update-metadata --metadata <path> --app <appId|bundleId> [--version <x.y.z>] [--platform <IOS|MAC_OS>] [--text-only] [--screenshots-only] [--json] [--apply]
   appstore-tools builds upload [--app <appId|bundleId>] [--version <x.y.z>] [--build-number <n>] [--ipa <path> | generation options] [--wait-processing] [--json] [--apply]
   appstore-tools certificates create [--type <certificateType>] [--common-name <name>] [--output-dir <path>] [--keychain <path>] [--skip-install] [--json]
 
@@ -522,6 +567,10 @@ async function handleCliCommand(
 
   if (command.kind === "apps-list") {
     return appsListCommand(client, { json: command.json });
+  }
+
+  if (command.kind === "apps-update-metadata") {
+    return appsUpdateMetadataCommand(client, command);
   }
 
   if (command.kind === "builds-upload") {

@@ -24,6 +24,14 @@ export {
 // Commands
 export { appsListCommand, listApps, type AppSummary } from "./commands/apps-list.js";
 export {
+  appsUpdateMetadataCommand,
+  updateMetadata,
+  type MetadataManifest,
+  type MetadataLocale,
+  type MetadataUpdateInput,
+  type MetadataUpdateResult
+} from "./commands/apps-update-metadata.js";
+export {
   buildsUploadCommand,
   uploadBuild,
   type BuildsUploadInput,
@@ -62,6 +70,7 @@ export {
   resolveCliEnvironment,
   runCli,
   type AppsListCliCommand,
+  type AppsUpdateMetadataCliCommand,
   type BuildsUploadCliCommand,
   type CliCommand,
   type CertificatesCreateCliCommand,

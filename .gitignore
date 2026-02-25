@@ -6,3 +6,5 @@ coverage/
 npm-debug.log*
 .env
 *.p8
+.claude/settings.json
+.claude/settings.local.json
