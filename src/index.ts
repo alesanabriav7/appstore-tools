@@ -26,10 +26,13 @@ export { appsListCommand, listApps, type AppSummary } from "./commands/apps-list
 export {
   appsUpdateMetadataCommand,
   updateMetadata,
+  type AgeRatingDeclaration,
+  type AppMetadata,
   type MetadataManifest,
   type MetadataLocale,
   type MetadataUpdateInput,
-  type MetadataUpdateResult
+  type MetadataUpdateResult,
+  type ReviewContact
 } from "./commands/apps-update-metadata.js";
 export {
   buildsUploadCommand,

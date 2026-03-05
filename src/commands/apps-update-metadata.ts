@@ -80,6 +80,45 @@ interface ScreenshotResponse {
   };
 }
 
+interface AppInfosResponse {
+  readonly data: readonly {
+    readonly id: string;
+    readonly type: string;
+  }[];
+}
+
+interface AppInfoLocalizationData {
+  readonly id: string;
+  readonly attributes: {
+    readonly locale?: string;
+    readonly subtitle?: string;
+    readonly privacyPolicyUrl?: string;
+  };
+}
+
+interface AppInfoLocalizationsResponse {
+  readonly data: readonly AppInfoLocalizationData[];
+}
+
+interface AppStoreReviewDetailResponse {
+  readonly data: {
+    readonly id: string;
+    readonly attributes: {
+      readonly contactFirstName?: string;
+      readonly contactLastName?: string;
+      readonly contactPhone?: string;
+      readonly contactEmail?: string;
+    };
+  };
+}
+
+interface AgeRatingDeclarationResponse {
+  readonly data: {
+    readonly id: string;
+    readonly attributes: Record<string, unknown>;
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Public types
 // ---------------------------------------------------------------------------
@@ -90,16 +129,43 @@ export interface MetadataLocale {
   readonly promotionalText?: string;
   readonly supportUrl?: string;
   readonly marketingUrl?: string;
+  readonly subtitle?: string;
+  readonly privacyPolicyUrl?: string;
   readonly screenshots?: Readonly<Record<string, readonly string[]>>;
 }
 
-export type MetadataManifest = Readonly<Record<string, MetadataLocale>>;
+export interface AgeRatingDeclaration {
+  readonly gamblingAndContests?: boolean;
+  readonly unrestrictedWebAccess?: boolean;
+  readonly horrorOrFearThemes?: string;
+  readonly matureOrSuggestiveThemes?: string;
+  readonly violenceCartoonOrFantasy?: string;
+  readonly violenceRealistic?: string;
+  readonly medicalOrTreatmentInformation?: string;
+}
+
+export interface ReviewContact {
+  readonly contactFirstName?: string;
+  readonly contactLastName?: string;
+  readonly contactPhone?: string;
+  readonly contactEmail?: string;
+}
+
+export interface AppMetadata {
+  readonly primaryCategory?: string;
+  readonly copyright?: string;
+  readonly ageRating?: AgeRatingDeclaration;
+  readonly reviewContact?: ReviewContact;
+}
+
+export type MetadataManifest = Readonly<Record<string, MetadataLocale | AppMetadata>>;
 
 export interface MetadataUpdateInput {
   readonly appId: string;
   readonly platform: "IOS" | "MAC_OS";
   readonly version?: string | undefined;
   readonly manifest: MetadataManifest;
+  readonly appMetadata?: AppMetadata;
   readonly textOnly: boolean;
   readonly screenshotsOnly: boolean;
   readonly apply: boolean;
@@ -114,6 +180,12 @@ export interface MetadataUpdateResult {
   readonly localizationsCreated: number;
   readonly screenshotSetsProcessed: number;
   readonly screenshotsUploaded: number;
+  readonly appInfoLocalizationsUpdated: number;
+  readonly appInfoLocalizationsCreated: number;
+  readonly copyrightUpdated: boolean;
+  readonly categoryUpdated: boolean;
+  readonly ageRatingUpdated: boolean;
+  readonly reviewContactUpdated: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -340,10 +412,296 @@ async function commitScreenshot(
 }
 
 // ---------------------------------------------------------------------------
+// API helpers – app info, age rating, review contact
+// ---------------------------------------------------------------------------
+
+async function getAppInfos(
+  client: AppStoreConnectClient,
+  appId: string
+): Promise<AppInfosResponse> {
+  const response = await client.request<AppInfosResponse>({
+    method: "GET",
+    path: `/v1/apps/${appId}/appInfos`
+  });
+
+  return response.data;
+}
+
+async function getAppInfoLocalizations(
+  client: AppStoreConnectClient,
+  appInfoId: string
+): Promise<AppInfoLocalizationsResponse> {
+  const response = await client.request<AppInfoLocalizationsResponse>({
+    method: "GET",
+    path: `/v1/appInfos/${appInfoId}/appInfoLocalizations`,
+    query: {
+      "fields[appInfoLocalizations]": "locale,subtitle,privacyPolicyUrl"
+    }
+  });
+
+  return response.data;
+}
+
+async function updateAppInfoLocalization(
+  client: AppStoreConnectClient,
+  id: string,
+  fields: Readonly<Record<string, string>>
+): Promise<void> {
+  await client.request<void>({
+    method: "PATCH",
+    path: `/v1/appInfoLocalizations/${id}`,
+    body: {
+      data: {
+        type: "appInfoLocalizations",
+        id,
+        attributes: fields
+      }
+    }
+  });
+}
+
+async function createAppInfoLocalization(
+  client: AppStoreConnectClient,
+  appInfoId: string,
+  locale: string,
+  fields: Readonly<Record<string, string>>
+): Promise<string> {
+  const response = await client.request<{ readonly data: { readonly id: string } }>({
+    method: "POST",
+    path: "/v1/appInfoLocalizations",
+    body: {
+      data: {
+        type: "appInfoLocalizations",
+        attributes: {
+          locale,
+          ...fields
+        },
+        relationships: {
+          appInfo: {
+            data: {
+              type: "appInfos",
+              id: appInfoId
+            }
+          }
+        }
+      }
+    }
+  });
+
+  return response.data.data.id;
+}
+
+async function updateAppStoreVersion(
+  client: AppStoreConnectClient,
+  versionId: string,
+  attrs: Readonly<Record<string, string>>
+): Promise<void> {
+  await client.request<void>({
+    method: "PATCH",
+    path: `/v1/appStoreVersions/${versionId}`,
+    body: {
+      data: {
+        type: "appStoreVersions",
+        id: versionId,
+        attributes: attrs
+      }
+    }
+  });
+}
+
+async function getAppStoreReviewDetail(
+  client: AppStoreConnectClient,
+  versionId: string
+): Promise<AppStoreReviewDetailResponse | null> {
+  try {
+    const response = await client.request<AppStoreReviewDetailResponse>({
+      method: "GET",
+      path: `/v1/appStoreVersions/${versionId}/appStoreReviewDetail`,
+      query: {
+        "fields[appStoreReviewDetails]":
+          "contactFirstName,contactLastName,contactPhone,contactEmail"
+      }
+    });
+
+    return response.data;
+  } catch (error) {
+    if (error instanceof InfrastructureError && error.details?.statusCode === 404) {
+      return null;
+    }
+
+    throw error;
+  }
+}
+
+async function createAppStoreReviewDetail(
+  client: AppStoreConnectClient,
+  versionId: string,
+  fields: Readonly<Record<string, string>>
+): Promise<string> {
+  const response = await client.request<{ readonly data: { readonly id: string } }>({
+    method: "POST",
+    path: "/v1/appStoreReviewDetails",
+    body: {
+      data: {
+        type: "appStoreReviewDetails",
+        attributes: fields,
+        relationships: {
+          appStoreVersion: {
+            data: {
+              type: "appStoreVersions",
+              id: versionId
+            }
+          }
+        }
+      }
+    }
+  });
+
+  return response.data.data.id;
+}
+
+async function updateAppStoreReviewDetail(
+  client: AppStoreConnectClient,
+  id: string,
+  fields: Readonly<Record<string, string>>
+): Promise<void> {
+  await client.request<void>({
+    method: "PATCH",
+    path: `/v1/appStoreReviewDetails/${id}`,
+    body: {
+      data: {
+        type: "appStoreReviewDetails",
+        id,
+        attributes: fields
+      }
+    }
+  });
+}
+
+async function getAgeRatingDeclaration(
+  client: AppStoreConnectClient,
+  appInfoId: string
+): Promise<AgeRatingDeclarationResponse> {
+  const response = await client.request<AgeRatingDeclarationResponse>({
+    method: "GET",
+    path: `/v1/appInfos/${appInfoId}/ageRatingDeclaration`
+  });
+
+  return response.data;
+}
+
+async function updateAgeRatingDeclaration(
+  client: AppStoreConnectClient,
+  id: string,
+  fields: Readonly<Record<string, unknown>>
+): Promise<void> {
+  await client.request<void>({
+    method: "PATCH",
+    path: `/v1/ageRatingDeclarations/${id}`,
+    body: {
+      data: {
+        type: "ageRatingDeclarations",
+        id,
+        attributes: fields
+      }
+    }
+  });
+}
+
+async function updateAppInfoCategory(
+  client: AppStoreConnectClient,
+  appInfoId: string,
+  category: string
+): Promise<void> {
+  await client.request<void>({
+    method: "PATCH",
+    path: `/v1/appInfos/${appInfoId}`,
+    body: {
+      data: {
+        type: "appInfos",
+        id: appInfoId,
+        relationships: {
+          primaryCategory: {
+            data: {
+              type: "appCategories",
+              id: category
+            }
+          }
+        }
+      }
+    }
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
 const TEXT_FIELDS = ["description", "keywords", "promotionalText", "supportUrl", "marketingUrl"] as const;
+const APP_INFO_FIELDS = ["subtitle", "privacyPolicyUrl"] as const;
+const AGE_RATING_BOOLEAN_FIELDS = ["gamblingAndContests", "unrestrictedWebAccess"] as const;
+const AGE_RATING_FREQUENCY_FIELDS = [
+  "horrorOrFearThemes",
+  "matureOrSuggestiveThemes",
+  "violenceCartoonOrFantasy",
+  "violenceRealistic",
+  "medicalOrTreatmentInformation"
+] as const;
+const REVIEW_CONTACT_FIELDS = ["contactFirstName", "contactLastName", "contactPhone", "contactEmail"] as const;
+
+const RESERVED_KEYS = new Set(["_app"]);
+
+function validateAppMetadata(value: unknown): AppMetadata {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new DomainError('Invalid manifest: "_app" must be a JSON object.');
+  }
+
+  const obj = value as Record<string, unknown>;
+
+  if ("primaryCategory" in obj && typeof obj.primaryCategory !== "string") {
+    throw new DomainError('Invalid manifest: "_app.primaryCategory" must be a string.');
+  }
+
+  if ("copyright" in obj && typeof obj.copyright !== "string") {
+    throw new DomainError('Invalid manifest: "_app.copyright" must be a string.');
+  }
+
+  if ("ageRating" in obj) {
+    if (typeof obj.ageRating !== "object" || obj.ageRating === null || Array.isArray(obj.ageRating)) {
+      throw new DomainError('Invalid manifest: "_app.ageRating" must be a JSON object.');
+    }
+
+    const ar = obj.ageRating as Record<string, unknown>;
+
+    for (const field of AGE_RATING_BOOLEAN_FIELDS) {
+      if (field in ar && typeof ar[field] !== "boolean") {
+        throw new DomainError(`Invalid manifest: "_app.ageRating.${field}" must be a boolean.`);
+      }
+    }
+
+    for (const field of AGE_RATING_FREQUENCY_FIELDS) {
+      if (field in ar && typeof ar[field] !== "string") {
+        throw new DomainError(`Invalid manifest: "_app.ageRating.${field}" must be a string.`);
+      }
+    }
+  }
+
+  if ("reviewContact" in obj) {
+    if (typeof obj.reviewContact !== "object" || obj.reviewContact === null || Array.isArray(obj.reviewContact)) {
+      throw new DomainError('Invalid manifest: "_app.reviewContact" must be a JSON object.');
+    }
+
+    const rc = obj.reviewContact as Record<string, unknown>;
+
+    for (const field of REVIEW_CONTACT_FIELDS) {
+      if (field in rc && typeof rc[field] !== "string") {
+        throw new DomainError(`Invalid manifest: "_app.reviewContact.${field}" must be a string.`);
+      }
+    }
+  }
+
+  return value as AppMetadata;
+}
 
 export function validateManifest(value: unknown): MetadataManifest {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
@@ -352,7 +710,14 @@ export function validateManifest(value: unknown): MetadataManifest {
 
   const obj = value as Record<string, unknown>;
 
+  // Validate _app key if present
+  if ("_app" in obj) {
+    validateAppMetadata(obj._app);
+  }
+
   for (const [locale, localeValue] of Object.entries(obj)) {
+    if (RESERVED_KEYS.has(locale)) continue;
+
     if (typeof localeValue !== "object" || localeValue === null || Array.isArray(localeValue)) {
       throw new DomainError(`Invalid manifest: locale "${locale}" must be a JSON object.`);
     }
@@ -360,6 +725,14 @@ export function validateManifest(value: unknown): MetadataManifest {
     const localeObj = localeValue as Record<string, unknown>;
 
     for (const field of TEXT_FIELDS) {
+      if (field in localeObj && typeof localeObj[field] !== "string") {
+        throw new DomainError(
+          `Invalid manifest: locale "${locale}" field "${field}" must be a string.`
+        );
+      }
+    }
+
+    for (const field of APP_INFO_FIELDS) {
       if (field in localeObj && typeof localeObj[field] !== "string") {
         throw new DomainError(
           `Invalid manifest: locale "${locale}" field "${field}" must be a string.`
@@ -399,6 +772,23 @@ function extractTextFields(locale: MetadataLocale): Record<string, string> {
   if (locale.marketingUrl !== undefined) fields.marketingUrl = locale.marketingUrl;
 
   return fields;
+}
+
+function extractAppInfoFields(locale: MetadataLocale): Record<string, string> {
+  const fields: Record<string, string> = {};
+
+  if (locale.subtitle !== undefined) fields.subtitle = locale.subtitle;
+  if (locale.privacyPolicyUrl !== undefined) fields.privacyPolicyUrl = locale.privacyPolicyUrl;
+
+  return fields;
+}
+
+function getLocaleKeys(manifest: MetadataManifest): string[] {
+  return Object.keys(manifest).filter((k) => !RESERVED_KEYS.has(k));
+}
+
+function getAppMetadata(manifest: MetadataManifest): AppMetadata | undefined {
+  return manifest._app as AppMetadata | undefined;
 }
 
 function findEditableVersion(
@@ -456,7 +846,8 @@ export async function updateMetadata(
 
   // 2. Build planned operations
   const plannedOperations: string[] = [];
-  const locales = Object.keys(input.manifest);
+  const locales = getLocaleKeys(input.manifest);
+  const appMeta = input.appMetadata ?? getAppMetadata(input.manifest);
 
   // 3. Get existing localizations
   const existingLocalizations = await getVersionLocalizations(client, editableVersion.id);
@@ -478,7 +869,7 @@ export async function updateMetadata(
 
   if (shouldUpdateText) {
     for (const locale of locales) {
-      const localeData = input.manifest[locale];
+      const localeData = input.manifest[locale] as MetadataLocale | undefined;
       if (!localeData) continue;
 
       const fields = extractTextFields(localeData);
@@ -495,7 +886,7 @@ export async function updateMetadata(
 
   if (shouldUpdateScreenshots) {
     for (const locale of locales) {
-      const localeData = input.manifest[locale];
+      const localeData = input.manifest[locale] as MetadataLocale | undefined;
       if (!localeData) continue;
 
       const screenshots = localeData.screenshots;
@@ -510,6 +901,68 @@ export async function updateMetadata(
     }
   }
 
+  // Plan app-info localization operations (subtitle, privacyPolicyUrl)
+  // We check if any locale has these fields before fetching appInfos
+  const hasAppInfoFields = locales.some((locale) => {
+    const localeData = input.manifest[locale] as MetadataLocale | undefined;
+    if (!localeData) return false;
+    return Object.keys(extractAppInfoFields(localeData)).length > 0;
+  });
+
+  let appInfoId: string | undefined;
+  const appInfoLocaleToId = new Map<string, string>();
+
+  if (hasAppInfoFields && shouldUpdateText) {
+    const appInfos = await getAppInfos(client, input.appId);
+
+    if (appInfos.data.length === 0) {
+      throw new DomainError("No appInfo found for this app.");
+    }
+
+    appInfoId = appInfos.data[0]!.id;
+    const existingAppInfoLocs = await getAppInfoLocalizations(client, appInfoId);
+
+    for (const loc of existingAppInfoLocs.data) {
+      if (loc.attributes.locale) {
+        appInfoLocaleToId.set(loc.attributes.locale, loc.id);
+      }
+    }
+
+    for (const locale of locales) {
+      const localeData = input.manifest[locale] as MetadataLocale | undefined;
+      if (!localeData) continue;
+
+      const fields = extractAppInfoFields(localeData);
+
+      if (Object.keys(fields).length === 0) continue;
+
+      if (appInfoLocaleToId.has(locale)) {
+        plannedOperations.push(`Update app info localization for ${locale} (${Object.keys(fields).join(", ")})`);
+      } else {
+        plannedOperations.push(`Create app info localization for ${locale} (${Object.keys(fields).join(", ")})`);
+      }
+    }
+  }
+
+  // Plan app-level metadata operations
+  if (appMeta) {
+    if (appMeta.copyright) {
+      plannedOperations.push("Update copyright");
+    }
+
+    if (appMeta.primaryCategory) {
+      plannedOperations.push(`Update primary category to ${appMeta.primaryCategory}`);
+    }
+
+    if (appMeta.ageRating) {
+      plannedOperations.push("Update age rating declaration");
+    }
+
+    if (appMeta.reviewContact) {
+      plannedOperations.push("Update review contact information");
+    }
+  }
+
   if (!input.apply) {
     return {
       mode: "dry-run",
@@ -519,7 +972,13 @@ export async function updateMetadata(
       localizationsUpdated: 0,
       localizationsCreated: 0,
       screenshotSetsProcessed: 0,
-      screenshotsUploaded: 0
+      screenshotsUploaded: 0,
+      appInfoLocalizationsUpdated: 0,
+      appInfoLocalizationsCreated: 0,
+      copyrightUpdated: false,
+      categoryUpdated: false,
+      ageRatingUpdated: false,
+      reviewContactUpdated: false
     };
   }
 
@@ -529,7 +988,7 @@ export async function updateMetadata(
 
   if (shouldUpdateText) {
     for (const locale of locales) {
-      const localeData = input.manifest[locale];
+      const localeData = input.manifest[locale] as MetadataLocale | undefined;
       if (!localeData) continue;
 
       const fields = extractTextFields(localeData);
@@ -555,7 +1014,7 @@ export async function updateMetadata(
 
   if (shouldUpdateScreenshots) {
     for (const locale of locales) {
-      const localeData = input.manifest[locale];
+      const localeData = input.manifest[locale] as MetadataLocale | undefined;
       if (!localeData) continue;
 
       const screenshots = localeData.screenshots;
@@ -622,6 +1081,93 @@ export async function updateMetadata(
     }
   }
 
+  // 6. Apply app-info localizations (subtitle, privacyPolicyUrl)
+  let appInfoLocalizationsUpdated = 0;
+  let appInfoLocalizationsCreated = 0;
+
+  if (hasAppInfoFields && shouldUpdateText && appInfoId) {
+    for (const locale of locales) {
+      const localeData = input.manifest[locale] as MetadataLocale | undefined;
+      if (!localeData) continue;
+
+      const fields = extractAppInfoFields(localeData);
+
+      if (Object.keys(fields).length === 0) continue;
+
+      const existingId = appInfoLocaleToId.get(locale);
+
+      if (existingId) {
+        await updateAppInfoLocalization(client, existingId, fields);
+        appInfoLocalizationsUpdated += 1;
+      } else {
+        const newId = await createAppInfoLocalization(client, appInfoId, locale, fields);
+        appInfoLocaleToId.set(locale, newId);
+        appInfoLocalizationsCreated += 1;
+      }
+    }
+  }
+
+  // 7. Apply app-level metadata
+  let copyrightUpdated = false;
+  let categoryUpdated = false;
+  let ageRatingUpdated = false;
+  let reviewContactUpdated = false;
+
+  if (appMeta) {
+    // Copyright — PATCH appStoreVersion
+    if (appMeta.copyright) {
+      await updateAppStoreVersion(client, editableVersion.id, { copyright: appMeta.copyright });
+      copyrightUpdated = true;
+    }
+
+    // Resolve appInfoId once for category and age rating
+    if ((appMeta.primaryCategory || appMeta.ageRating) && !appInfoId) {
+      const appInfos = await getAppInfos(client, input.appId);
+
+      if (appInfos.data.length === 0) {
+        throw new DomainError("No appInfo found for this app.");
+      }
+
+      appInfoId = appInfos.data[0]!.id;
+    }
+
+    // Category — PATCH appInfo with relationship
+    if (appMeta.primaryCategory && appInfoId) {
+      await updateAppInfoCategory(client, appInfoId, appMeta.primaryCategory);
+      categoryUpdated = true;
+    }
+
+    // Age rating — GET declaration → PATCH
+    if (appMeta.ageRating && appInfoId) {
+      const ageRatingDecl = await getAgeRatingDeclaration(client, appInfoId);
+      await updateAgeRatingDeclaration(client, ageRatingDecl.data.id, { ...appMeta.ageRating });
+      ageRatingUpdated = true;
+    }
+
+    // Review contact — GET or POST, then PATCH
+    if (appMeta.reviewContact) {
+      const contactFields: Record<string, string> = {};
+
+      for (const field of REVIEW_CONTACT_FIELDS) {
+        const val = appMeta.reviewContact[field];
+
+        if (val !== undefined) {
+          contactFields[field] = val;
+        }
+      }
+
+      const existingReviewDetail = await getAppStoreReviewDetail(client, editableVersion.id);
+
+      if (existingReviewDetail) {
+        await updateAppStoreReviewDetail(client, existingReviewDetail.data.id, contactFields);
+      } else {
+        await createAppStoreReviewDetail(client, editableVersion.id, contactFields);
+      }
+
+      reviewContactUpdated = true;
+    }
+  }
+
   return {
     mode: "applied",
     versionId: editableVersion.id,
@@ -630,7 +1176,13 @@ export async function updateMetadata(
     localizationsUpdated,
     localizationsCreated,
     screenshotSetsProcessed,
-    screenshotsUploaded
+    screenshotsUploaded,
+    appInfoLocalizationsUpdated,
+    appInfoLocalizationsCreated,
+    copyrightUpdated,
+    categoryUpdated,
+    ageRatingUpdated,
+    reviewContactUpdated
   };
 }
 
@@ -719,5 +1271,11 @@ function printMetadataUpdateResult(result: MetadataUpdateResult, app: AppSummary
     console.log(`Localizations created: ${result.localizationsCreated}`);
     console.log(`Screenshot sets processed: ${result.screenshotSetsProcessed}`);
     console.log(`Screenshots uploaded: ${result.screenshotsUploaded}`);
+    console.log(`App info localizations updated: ${result.appInfoLocalizationsUpdated}`);
+    console.log(`App info localizations created: ${result.appInfoLocalizationsCreated}`);
+    if (result.copyrightUpdated) console.log("Copyright updated");
+    if (result.categoryUpdated) console.log("Primary category updated");
+    if (result.ageRatingUpdated) console.log("Age rating declaration updated");
+    if (result.reviewContactUpdated) console.log("Review contact updated");
   }
 }

@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 import { updateMetadata, validateManifest, type MetadataUpdateInput } from "../../src/commands/apps-update-metadata.js";
 import {
   DomainError,
+  InfrastructureError,
   type AppStoreConnectClient,
   type HttpRequest,
   type HttpResponse
@@ -54,6 +55,15 @@ function createMockClient(options?: {
     readonly screenshotDisplayType: string;
     readonly screenshots?: readonly string[];
   }[];
+  readonly appInfos?: readonly {
+    readonly id: string;
+  }[];
+  readonly appInfoLocalizations?: readonly {
+    readonly id: string;
+    readonly locale: string;
+  }[];
+  readonly hasReviewDetail?: boolean;
+  readonly ageRatingDeclarationId?: string;
 }): {
   client: AppStoreConnectClient;
   requests: HttpRequest[];
@@ -74,13 +84,19 @@ function createMockClient(options?: {
   ];
 
   const screenshotSets = options?.screenshotSets ?? [];
+  const appInfos = options?.appInfos ?? [{ id: "appinfo-1" }];
+  const appInfoLocalizations = options?.appInfoLocalizations ?? [
+    { id: "appinfoloc-en", locale: "en-US" }
+  ];
+  const hasReviewDetail = options?.hasReviewDetail ?? false;
+  const ageRatingDeclarationId = options?.ageRatingDeclarationId ?? "agerate-1";
 
   const client = {
     request: async <T>(request: HttpRequest) => {
       requests.push(request);
 
       // GET app store versions
-      if (request.method === "GET" && request.path.includes("/appStoreVersions") && !request.path.includes("Localizations") && !request.path.includes("appScreenshotSets")) {
+      if (request.method === "GET" && request.path.includes("/appStoreVersions") && !request.path.includes("Localizations") && !request.path.includes("appScreenshotSets") && !request.path.includes("appStoreReviewDetail")) {
         return {
           status: 200,
           headers: new Headers(),
@@ -97,7 +113,7 @@ function createMockClient(options?: {
         } as HttpResponse<T>;
       }
 
-      // GET localizations
+      // GET version localizations
       if (request.method === "GET" && request.path.includes("/appStoreVersionLocalizations") && !request.path.includes("/appScreenshotSets")) {
         return {
           status: 200,
@@ -111,12 +127,12 @@ function createMockClient(options?: {
         } as HttpResponse<T>;
       }
 
-      // PATCH localization
+      // PATCH version localization
       if (request.method === "PATCH" && request.path.includes("/appStoreVersionLocalizations/")) {
         return { status: 200, headers: new Headers(), data: {} } as HttpResponse<T>;
       }
 
-      // POST localization
+      // POST version localization
       if (request.method === "POST" && request.path === "/v1/appStoreVersionLocalizations") {
         return {
           status: 201,
@@ -174,6 +190,99 @@ function createMockClient(options?: {
 
       // PATCH screenshot (commit)
       if (request.method === "PATCH" && request.path.includes("/appScreenshots/")) {
+        return { status: 200, headers: new Headers(), data: {} } as HttpResponse<T>;
+      }
+
+      // GET appInfos
+      if (request.method === "GET" && request.path.includes("/appInfos") && !request.path.includes("/appInfoLocalizations") && !request.path.includes("/ageRatingDeclaration")) {
+        return {
+          status: 200,
+          headers: new Headers(),
+          data: {
+            data: appInfos.map((ai) => ({ id: ai.id, type: "appInfos" }))
+          }
+        } as HttpResponse<T>;
+      }
+
+      // GET appInfoLocalizations
+      if (request.method === "GET" && request.path.includes("/appInfoLocalizations")) {
+        return {
+          status: 200,
+          headers: new Headers(),
+          data: {
+            data: appInfoLocalizations.map((l) => ({
+              id: l.id,
+              attributes: { locale: l.locale }
+            }))
+          }
+        } as HttpResponse<T>;
+      }
+
+      // PATCH appInfoLocalization
+      if (request.method === "PATCH" && request.path.includes("/appInfoLocalizations/")) {
+        return { status: 200, headers: new Headers(), data: {} } as HttpResponse<T>;
+      }
+
+      // POST appInfoLocalization
+      if (request.method === "POST" && request.path === "/v1/appInfoLocalizations") {
+        return {
+          status: 201,
+          headers: new Headers(),
+          data: { data: { id: "appinfoloc-new" } }
+        } as HttpResponse<T>;
+      }
+
+      // PATCH appStoreVersion (copyright)
+      if (request.method === "PATCH" && request.path.includes("/appStoreVersions/")) {
+        return { status: 200, headers: new Headers(), data: {} } as HttpResponse<T>;
+      }
+
+      // PATCH appInfos (category)
+      if (request.method === "PATCH" && request.path.includes("/appInfos/")) {
+        return { status: 200, headers: new Headers(), data: {} } as HttpResponse<T>;
+      }
+
+      // GET ageRatingDeclaration
+      if (request.method === "GET" && request.path.includes("/ageRatingDeclaration")) {
+        return {
+          status: 200,
+          headers: new Headers(),
+          data: {
+            data: { id: ageRatingDeclarationId, attributes: {} }
+          }
+        } as HttpResponse<T>;
+      }
+
+      // PATCH ageRatingDeclaration
+      if (request.method === "PATCH" && request.path.includes("/ageRatingDeclarations/")) {
+        return { status: 200, headers: new Headers(), data: {} } as HttpResponse<T>;
+      }
+
+      // GET appStoreReviewDetail
+      if (request.method === "GET" && request.path.includes("/appStoreReviewDetail")) {
+        if (hasReviewDetail) {
+          return {
+            status: 200,
+            headers: new Headers(),
+            data: {
+              data: { id: "review-detail-1", attributes: {} }
+            }
+          } as HttpResponse<T>;
+        }
+        throw new InfrastructureError("Not found", undefined, { statusCode: 404 });
+      }
+
+      // POST appStoreReviewDetails
+      if (request.method === "POST" && request.path === "/v1/appStoreReviewDetails") {
+        return {
+          status: 201,
+          headers: new Headers(),
+          data: { data: { id: "review-detail-new" } }
+        } as HttpResponse<T>;
+      }
+
+      // PATCH appStoreReviewDetail
+      if (request.method === "PATCH" && request.path.includes("/appStoreReviewDetails/")) {
         return { status: 200, headers: new Headers(), data: {} } as HttpResponse<T>;
       }
 
@@ -644,5 +753,360 @@ describe("updateMetadata", () => {
 
     expect(result.versionId).toBe("version-editable");
     expect(result.versionString).toBe("2.0.0");
+  });
+
+  it("ignores _app key when processing locale text fields", async () => {
+    const { client, requests } = createMockClient();
+
+    const result = await updateMetadata(
+      client,
+      baseInput({
+        apply: true,
+        manifest: {
+          _app: {
+            copyright: "2026 Test"
+          } as never,
+          "en-US": {
+            description: "Updated description"
+          }
+        }
+      })
+    );
+
+    expect(result.localizationsUpdated).toBe(1);
+    expect(result.copyrightUpdated).toBe(true);
+
+    // _app should not produce a localization PATCH/POST
+    const locPatches = requests.filter(
+      (r) => r.method === "PATCH" && r.path.includes("/appStoreVersionLocalizations/")
+    );
+    expect(locPatches).toHaveLength(1);
+  });
+
+  it("dry-run plans app-info localization operations", async () => {
+    const { client } = createMockClient();
+
+    const result = await updateMetadata(
+      client,
+      baseInput({
+        manifest: {
+          "en-US": {
+            description: "Test",
+            subtitle: "My Subtitle",
+            privacyPolicyUrl: "https://example.com/privacy"
+          }
+        }
+      })
+    );
+
+    expect(result.mode).toBe("dry-run");
+    expect(result.plannedOperations).toContainEqual(
+      expect.stringContaining("Update app info localization for en-US")
+    );
+  });
+
+  it("dry-run plans app metadata operations", async () => {
+    const { client } = createMockClient();
+
+    const result = await updateMetadata(
+      client,
+      baseInput({
+        manifest: {
+          _app: {
+            copyright: "2026 Test",
+            primaryCategory: "FINANCE",
+            ageRating: { gamblingAndContests: false },
+            reviewContact: { contactEmail: "test@test.com" }
+          } as never,
+          "en-US": { description: "Test" }
+        }
+      })
+    );
+
+    expect(result.mode).toBe("dry-run");
+    expect(result.plannedOperations).toContainEqual("Update copyright");
+    expect(result.plannedOperations).toContainEqual("Update primary category to FINANCE");
+    expect(result.plannedOperations).toContainEqual("Update age rating declaration");
+    expect(result.plannedOperations).toContainEqual("Update review contact information");
+  });
+
+  it("applies subtitle and privacyPolicyUrl via app info localizations", async () => {
+    const { client, requests } = createMockClient();
+
+    const result = await updateMetadata(
+      client,
+      baseInput({
+        apply: true,
+        manifest: {
+          "en-US": {
+            description: "Test",
+            subtitle: "My Subtitle",
+            privacyPolicyUrl: "https://example.com/privacy"
+          }
+        }
+      })
+    );
+
+    expect(result.appInfoLocalizationsUpdated).toBe(1);
+    expect(result.appInfoLocalizationsCreated).toBe(0);
+
+    const appInfoLocPatches = requests.filter(
+      (r) => r.method === "PATCH" && r.path.includes("/appInfoLocalizations/")
+    );
+    expect(appInfoLocPatches).toHaveLength(1);
+    expect(appInfoLocPatches[0]!.path).toContain("appinfoloc-en");
+  });
+
+  it("creates app info localization for new locale", async () => {
+    const { client, requests } = createMockClient();
+
+    const result = await updateMetadata(
+      client,
+      baseInput({
+        apply: true,
+        manifest: {
+          "es-MX": {
+            description: "Descripción",
+            subtitle: "Subtítulo"
+          }
+        }
+      })
+    );
+
+    expect(result.appInfoLocalizationsCreated).toBe(1);
+
+    const appInfoLocPosts = requests.filter(
+      (r) => r.method === "POST" && r.path === "/v1/appInfoLocalizations"
+    );
+    expect(appInfoLocPosts).toHaveLength(1);
+  });
+
+  it("applies copyright to app store version", async () => {
+    const { client, requests } = createMockClient();
+
+    const result = await updateMetadata(
+      client,
+      baseInput({
+        apply: true,
+        manifest: {
+          _app: { copyright: "2026 Test Corp" } as never,
+          "en-US": { description: "Test" }
+        }
+      })
+    );
+
+    expect(result.copyrightUpdated).toBe(true);
+
+    const versionPatches = requests.filter(
+      (r) => r.method === "PATCH" && r.path.includes("/appStoreVersions/")
+    );
+    expect(versionPatches).toHaveLength(1);
+    const body = versionPatches[0]!.body as { data: { attributes: { copyright: string } } };
+    expect(body.data.attributes.copyright).toBe("2026 Test Corp");
+  });
+
+  it("applies primary category", async () => {
+    const { client, requests } = createMockClient();
+
+    const result = await updateMetadata(
+      client,
+      baseInput({
+        apply: true,
+        manifest: {
+          _app: { primaryCategory: "FINANCE" } as never,
+          "en-US": { description: "Test" }
+        }
+      })
+    );
+
+    expect(result.categoryUpdated).toBe(true);
+
+    const appInfoPatches = requests.filter(
+      (r) => r.method === "PATCH" && r.path.includes("/appInfos/")
+    );
+    expect(appInfoPatches).toHaveLength(1);
+    const body = appInfoPatches[0]!.body as {
+      data: { relationships: { primaryCategory: { data: { id: string } } } };
+    };
+    expect(body.data.relationships.primaryCategory.data.id).toBe("FINANCE");
+  });
+
+  it("applies age rating declaration", async () => {
+    const { client, requests } = createMockClient();
+
+    const result = await updateMetadata(
+      client,
+      baseInput({
+        apply: true,
+        manifest: {
+          _app: {
+            ageRating: {
+              gamblingAndContests: false,
+              horrorOrFearThemes: "NONE"
+            }
+          } as never,
+          "en-US": { description: "Test" }
+        }
+      })
+    );
+
+    expect(result.ageRatingUpdated).toBe(true);
+
+    const ageRatingPatches = requests.filter(
+      (r) => r.method === "PATCH" && r.path.includes("/ageRatingDeclarations/")
+    );
+    expect(ageRatingPatches).toHaveLength(1);
+    expect(ageRatingPatches[0]!.path).toContain("agerate-1");
+  });
+
+  it("creates review contact when none exists", async () => {
+    const { client, requests } = createMockClient({ hasReviewDetail: false });
+
+    const result = await updateMetadata(
+      client,
+      baseInput({
+        apply: true,
+        manifest: {
+          _app: {
+            reviewContact: {
+              contactFirstName: "Test",
+              contactEmail: "test@test.com"
+            }
+          } as never,
+          "en-US": { description: "Test" }
+        }
+      })
+    );
+
+    expect(result.reviewContactUpdated).toBe(true);
+
+    const reviewPosts = requests.filter(
+      (r) => r.method === "POST" && r.path === "/v1/appStoreReviewDetails"
+    );
+    expect(reviewPosts).toHaveLength(1);
+  });
+
+  it("updates review contact when one already exists", async () => {
+    const { client, requests } = createMockClient({ hasReviewDetail: true });
+
+    const result = await updateMetadata(
+      client,
+      baseInput({
+        apply: true,
+        manifest: {
+          _app: {
+            reviewContact: {
+              contactFirstName: "Updated",
+              contactEmail: "updated@test.com"
+            }
+          } as never,
+          "en-US": { description: "Test" }
+        }
+      })
+    );
+
+    expect(result.reviewContactUpdated).toBe(true);
+
+    const reviewPatches = requests.filter(
+      (r) => r.method === "PATCH" && r.path.includes("/appStoreReviewDetails/")
+    );
+    expect(reviewPatches).toHaveLength(1);
+    expect(reviewPatches[0]!.path).toContain("review-detail-1");
+  });
+});
+
+describe("validateManifest – _app key", () => {
+  it("accepts a valid _app key", () => {
+    const manifest = validateManifest({
+      _app: {
+        copyright: "2026 Test",
+        primaryCategory: "FINANCE",
+        ageRating: {
+          gamblingAndContests: false,
+          horrorOrFearThemes: "NONE"
+        },
+        reviewContact: {
+          contactFirstName: "Test",
+          contactEmail: "test@test.com"
+        }
+      },
+      "en-US": { description: "Hello" }
+    });
+
+    expect(manifest._app).toBeDefined();
+    expect(manifest["en-US"]).toBeDefined();
+  });
+
+  it("rejects _app when it is not an object", () => {
+    expect(() => validateManifest({ _app: "bad" })).toThrow(
+      '"_app" must be a JSON object'
+    );
+  });
+
+  it("rejects _app.primaryCategory when not a string", () => {
+    expect(() => validateManifest({ _app: { primaryCategory: 123 } })).toThrow(
+      '"_app.primaryCategory" must be a string'
+    );
+  });
+
+  it("rejects _app.copyright when not a string", () => {
+    expect(() => validateManifest({ _app: { copyright: false } })).toThrow(
+      '"_app.copyright" must be a string'
+    );
+  });
+
+  it("rejects _app.ageRating when not an object", () => {
+    expect(() => validateManifest({ _app: { ageRating: "bad" } })).toThrow(
+      '"_app.ageRating" must be a JSON object'
+    );
+  });
+
+  it("rejects _app.ageRating boolean field with wrong type", () => {
+    expect(() =>
+      validateManifest({ _app: { ageRating: { gamblingAndContests: "yes" } } })
+    ).toThrow('"_app.ageRating.gamblingAndContests" must be a boolean');
+  });
+
+  it("rejects _app.ageRating frequency field with wrong type", () => {
+    expect(() =>
+      validateManifest({ _app: { ageRating: { horrorOrFearThemes: 42 } } })
+    ).toThrow('"_app.ageRating.horrorOrFearThemes" must be a string');
+  });
+
+  it("rejects _app.reviewContact when not an object", () => {
+    expect(() => validateManifest({ _app: { reviewContact: [] } })).toThrow(
+      '"_app.reviewContact" must be a JSON object'
+    );
+  });
+
+  it("rejects _app.reviewContact field with wrong type", () => {
+    expect(() =>
+      validateManifest({ _app: { reviewContact: { contactEmail: 123 } } })
+    ).toThrow('"_app.reviewContact.contactEmail" must be a string');
+  });
+});
+
+describe("validateManifest – locale app info fields", () => {
+  it("accepts subtitle and privacyPolicyUrl as strings", () => {
+    const manifest = validateManifest({
+      "en-US": {
+        subtitle: "My Subtitle",
+        privacyPolicyUrl: "https://example.com/privacy"
+      }
+    });
+
+    expect(manifest["en-US"]).toBeDefined();
+  });
+
+  it("rejects subtitle when not a string", () => {
+    expect(() => validateManifest({ "en-US": { subtitle: 42 } })).toThrow(
+      'locale "en-US" field "subtitle" must be a string'
+    );
+  });
+
+  it("rejects privacyPolicyUrl when not a string", () => {
+    expect(() => validateManifest({ "en-US": { privacyPolicyUrl: true } })).toThrow(
+      'locale "en-US" field "privacyPolicyUrl" must be a string'
+    );
   });
 });
