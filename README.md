@@ -237,16 +237,59 @@ npx appstore-tools apps update-metadata \
 
 #### Manifest format
 
-The manifest is a JSON object keyed by locale. Each locale can contain text fields and/or a `screenshots` object:
+The manifest is a JSON object keyed by locale, with an optional `_app` key for app-level metadata.
+
+**Locale keys** can contain text fields and/or a `screenshots` object:
+
+| Field | Description |
+|---|---|
+| `description` | App description |
+| `keywords` | Comma-separated keywords |
+| `promotionalText` | Promotional text |
+| `supportUrl` | Support URL |
+| `marketingUrl` | Marketing URL |
+| `subtitle` | App subtitle |
+| `privacyPolicyUrl` | Privacy policy URL |
+| `screenshots` | Map of display type → array of file paths |
+
+**`_app` key** sets app-level metadata (not locale-specific):
+
+| Field | Description |
+|---|---|
+| `copyright` | Copyright string |
+| `primaryCategory` | Primary category ID (e.g., `PRODUCTIVITY`) |
+| `ageRating` | Age rating declaration (see below) |
+| `reviewContact` | Review contact information |
 
 ```json
 {
+  "_app": {
+    "copyright": "2025 Acme Inc.",
+    "primaryCategory": "PRODUCTIVITY",
+    "ageRating": {
+      "gamblingAndContests": false,
+      "unrestrictedWebAccess": false,
+      "horrorOrFearThemes": "NONE",
+      "matureOrSuggestiveThemes": "NONE",
+      "violenceCartoonOrFantasy": "NONE",
+      "violenceRealistic": "NONE",
+      "medicalOrTreatmentInformation": "NONE"
+    },
+    "reviewContact": {
+      "contactFirstName": "Jane",
+      "contactLastName": "Doe",
+      "contactPhone": "+1 555 000 0000",
+      "contactEmail": "review@example.com"
+    }
+  },
   "en-US": {
     "description": "The best app for doing things.",
     "keywords": "productivity, tools, utilities",
     "promotionalText": "Now with dark mode!",
     "supportUrl": "https://example.com/support",
     "marketingUrl": "https://example.com",
+    "subtitle": "Do things faster",
+    "privacyPolicyUrl": "https://example.com/privacy",
     "screenshots": {
       "APP_IPHONE_67": [
         "./screenshots/en-US/iphone67/01_home.png",
@@ -264,7 +307,7 @@ The manifest is a JSON object keyed by locale. Each locale can contain text fiel
 }
 ```
 
-All text fields are optional. Screenshot keys are App Store Connect display types (e.g., `APP_IPHONE_67`, `APP_IPAD_PRO_129`). File paths are resolved relative to the manifest file location.
+All fields are optional. Screenshot keys are App Store Connect display types (e.g., `APP_IPHONE_67`, `APP_IPAD_PRO_129`). File paths are resolved relative to the manifest file location.
 
 ### Upload build
 
