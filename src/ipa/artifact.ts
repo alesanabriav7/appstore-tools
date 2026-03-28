@@ -214,7 +214,14 @@ async function resolveXcodebuild(
       "-exportOptionsPlist",
       exportOptionsContext.exportOptionsPlistPath,
       "-exportPath",
-      exportDirectory
+      exportDirectory,
+      "-allowProvisioningUpdates",
+      "-authenticationKeyPath",
+      authContext.authenticationKeyPath,
+      "-authenticationKeyID",
+      authContext.authenticationKeyID,
+      "-authenticationKeyIssuerID",
+      authContext.authenticationKeyIssuerID
     ];
     await runSignedXcodebuild(processRunner, exportArgs, "xcodebuild -exportArchive");
 

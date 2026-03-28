@@ -144,6 +144,13 @@ describe("resolveIpaArtifact (xcodebuild signing)", () => {
     expect(exportArgs).toContain("-exportArchive");
     expect(exportArgs).toContain("-exportOptionsPlist");
     expect(exportArgs).toContain(path.resolve(exportOptionsPlistPath));
+    expect(exportArgs).toContain("-allowProvisioningUpdates");
+    expect(exportArgs).toContain("-authenticationKeyPath");
+    expect(exportArgs).toContain(path.resolve(keyPath));
+    expect(exportArgs).toContain("-authenticationKeyID");
+    expect(exportArgs).toContain("TEST");
+    expect(exportArgs).toContain("-authenticationKeyIssuerID");
+    expect(exportArgs).toContain("ISSUER_PATH_MODE");
   });
 
   it("uses ASC_KEY_CONTENT (base64), writes temp key, and cleans it up", async () => {
