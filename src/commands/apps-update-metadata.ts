@@ -902,17 +902,21 @@ export async function updateMetadata(
   }
 
   // Plan app-info localization operations (subtitle, privacyPolicyUrl)
-  // We check if any locale has these fields before fetching appInfos
   const hasAppInfoFields = locales.some((locale) => {
     const localeData = input.manifest[locale] as MetadataLocale | undefined;
     if (!localeData) return false;
     return Object.keys(extractAppInfoFields(localeData)).length > 0;
   });
 
+  const needsAppInfoId =
+    (hasAppInfoFields && shouldUpdateText) ||
+    !!appMeta?.primaryCategory ||
+    !!appMeta?.ageRating;
+
   let appInfoId: string | undefined;
   const appInfoLocaleToId = new Map<string, string>();
 
-  if (hasAppInfoFields && shouldUpdateText) {
+  if (needsAppInfoId) {
     const appInfos = await getAppInfos(client, input.appId);
 
     if (appInfos.data.length === 0) {
@@ -920,6 +924,9 @@ export async function updateMetadata(
     }
 
     appInfoId = appInfos.data[0]!.id;
+  }
+
+  if (hasAppInfoFields && shouldUpdateText && appInfoId) {
     const existingAppInfoLocs = await getAppInfoLocalizations(client, appInfoId);
 
     for (const loc of existingAppInfoLocs.data) {
@@ -1118,17 +1125,6 @@ export async function updateMetadata(
     if (appMeta.copyright) {
       await updateAppStoreVersion(client, editableVersion.id, { copyright: appMeta.copyright });
       copyrightUpdated = true;
-    }
-
-    // Resolve appInfoId once for category and age rating
-    if ((appMeta.primaryCategory || appMeta.ageRating) && !appInfoId) {
-      const appInfos = await getAppInfos(client, input.appId);
-
-      if (appInfos.data.length === 0) {
-        throw new DomainError("No appInfo found for this app.");
-      }
-
-      appInfoId = appInfos.data[0]!.id;
     }
 
     // Category — PATCH appInfo with relationship
