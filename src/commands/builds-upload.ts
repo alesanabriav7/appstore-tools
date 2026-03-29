@@ -12,6 +12,7 @@ import { resolveIpaArtifact, type IpaSource, type ProcessRunner } from "../ipa/a
 import { autoDetectIpaSource } from "../ipa/autodetect.js";
 import { verifyIpa } from "../ipa/preflight.js";
 import {
+  AltoolValidationError,
   uploadWithXcrunAltool,
   type FallbackUploadCredentials,
   type FallbackUploadMethod
@@ -401,7 +402,10 @@ export async function uploadBuild(
           ? "ALTOOL_WAIT_COMPLETED"
           : "ALTOOL_SUBMITTED"
       };
-    } catch {
+    } catch (error) {
+      if (error instanceof AltoolValidationError) {
+        throw error;
+      }
       // Fall through to API-based upload flow.
     }
 
