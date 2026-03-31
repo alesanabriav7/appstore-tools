@@ -5,6 +5,13 @@ import * as path from "node:path";
 import { InfrastructureError } from "../api/client.js";
 import { defaultProcessRunner, type ProcessRunner } from "./artifact.js";
 
+export class AltoolValidationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "AltoolValidationError";
+  }
+}
+
 export type FallbackUploadMethod =
   | "xcrun altool"
   | "App Store Connect API";
@@ -38,7 +45,14 @@ export async function uploadWithXcrunAltool(
       waitForProcessing
     );
 
-    await processRunner.run("xcrun", altoolArgs);
+    const result = await processRunner.run("xcrun", altoolArgs);
+
+    const output = `${result.stdout}\n${result.stderr}`;
+    if (/UPLOAD FAILED/i.test(output)) {
+      throw new AltoolValidationError(
+        `xcrun altool upload failed:\n${output.trim()}`
+      );
+    }
 
     return {
       method: "xcrun altool",

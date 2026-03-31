@@ -316,6 +316,65 @@ describe("uploadBuild", () => {
     }
   });
 
+  it("throws when altool exits 0 but prints UPLOAD FAILED", async () => {
+    const ipaPath = path.join(os.tmpdir(), `upload-altool-validation-fail-${Date.now()}.ipa`);
+    await writeFile(ipaPath, "dummy ipa bytes");
+
+    const client = {
+      request: async () => {
+        throw new Error("API fallback should not be used for altool validation errors.");
+      }
+    } as unknown as AppStoreConnectClient;
+
+    const validationError =
+      "UPLOAD FAILED with 1 error\n" +
+      "Validation failed (409) Missing Info.plist value. A value for the key " +
+      "'CFBundleDisplayName' in bundle App.app/PlugIns/Widget.appex is required.";
+
+    const processRunner = createProcessRunnerWithXcrun(
+      {
+        CFBundleIdentifier: "com.example.demo",
+        CFBundleShortVersionString: "1.0.0",
+        CFBundleVersion: "42"
+      },
+      async (args) => {
+        if (args[0] === "altool") {
+          return { stdout: validationError, stderr: "" };
+        }
+        throw new InfrastructureError(`Unexpected xcrun command: ${args.join(" ")}`);
+      }
+    );
+
+    try {
+      await expect(
+        uploadBuild(
+          client,
+          {
+            ipaSource: { kind: "prebuilt", ipaPath },
+            appId: "app-1",
+            expectedBundleId: "com.example.demo",
+            expectedVersion: "1.0.0",
+            expectedBuildNumber: "42",
+            waitProcessing: false,
+            apply: true
+          },
+          {
+            processRunner,
+            fallbackEnv: {
+              ...process.env,
+              ASC_KEY_ID: "KEY1234567",
+              ASC_ISSUER_ID: "issuer-123",
+              ASC_PRIVATE_KEY:
+                "-----BEGIN PRIVATE KEY-----\nabc123\n-----END PRIVATE KEY-----"
+            }
+          }
+        )
+      ).rejects.toThrow("UPLOAD FAILED");
+    } finally {
+      await rm(ipaPath, { force: true });
+    }
+  });
+
   it("falls back to App Store Connect API when altool upload fails", async () => {
     const ipaPath = path.join(os.tmpdir(), `upload-fallback-api-${Date.now()}.ipa`);
     await writeFile(ipaPath, "dummy ipa bytes");
