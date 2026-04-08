@@ -368,7 +368,7 @@ Every upload runs these checks before touching App Store Connect:
 - Code signing is valid (`codesign --verify --strict --deep`)
 - SHA-256 and MD5 checksums computed
 
-The CLI now attempts upload with `xcrun altool` first. If that primary upload fails (for example, missing local Xcode tooling/credentials), it automatically falls back to the App Store Connect upload API flow (`buildUploads` + `buildUploadFiles` + checksum marking/polling).
+The CLI attempts upload with `xcrun altool` first. If altool is unavailable (missing Xcode tooling or credentials), it automatically falls back to the App Store Connect upload API flow (`buildUploads` + `buildUploadFiles` + checksum marking/polling). If altool reports a validation error (e.g. bundle ID mismatch, invalid entitlements), the error is surfaced immediately — no fallback is attempted.
 
 ### Help
 
