@@ -8,6 +8,7 @@ import { AppStoreConnectClient, InfrastructureError } from "./api/client.js";
 import type { IpaSource } from "./ipa/artifact.js";
 import { resolveAscKeyIdFromEnvironment } from "./asc/key-id.js";
 import { appsListCommand } from "./commands/apps-list.js";
+import { appsReadMetadataCommand } from "./commands/apps-read-metadata.js";
 import { appsUpdateMetadataCommand } from "./commands/apps-update-metadata.js";
 import { buildsUploadCommand } from "./commands/builds-upload.js";
 import { certificatesCreateCommand } from "./commands/certificates-create.js";
@@ -135,6 +136,15 @@ export interface AppsUpdateMetadataCliCommand {
   readonly screenshotsOnly: boolean;
 }
 
+export interface AppsReadMetadataCliCommand {
+  readonly kind: "apps-read-metadata";
+  readonly json: boolean;
+  readonly appReference: string;
+  readonly outputPath: string;
+  readonly version?: string;
+  readonly platform: "IOS" | "MAC_OS";
+}
+
 export interface CertificatesCreateCliCommand {
   readonly kind: "certificates-create";
   readonly json: boolean;
@@ -151,6 +161,7 @@ export interface HelpCliCommand {
 
 export type CliCommand =
   | AppsListCliCommand
+  | AppsReadMetadataCliCommand
   | AppsUpdateMetadataCliCommand
   | IpaGenerateCliCommand
   | IpaExportOptionsCliCommand
@@ -177,6 +188,11 @@ export function parseCliCommand(argv: readonly string[]): CliCommand {
   if (head === "apps" && next === "update-metadata") {
     const flags = parseFlags(rest);
     return parseAppsUpdateMetadataCommand(flags);
+  }
+
+  if (head === "apps" && next === "read-metadata") {
+    const flags = parseFlags(rest);
+    return parseAppsReadMetadataCommand(flags);
   }
 
   if (head === "builds" && next === "upload") {
@@ -295,6 +311,28 @@ function parseAppsUpdateMetadataCommand(flags: ParsedFlags): AppsUpdateMetadataC
     metadataPath,
     textOnly: flags.booleans.has("text-only"),
     screenshotsOnly: flags.booleans.has("screenshots-only"),
+    ...(version ? { version } : {}),
+    platform: platformRaw
+  };
+}
+
+function parseAppsReadMetadataCommand(flags: ParsedFlags): AppsReadMetadataCliCommand {
+  const appReference = requireFlag(flags, "app");
+  const outputPath = normalizeOptionalFlag(flags.values.output) ?? "./metadata.json";
+  const version = normalizeOptionalFlag(flags.values.version);
+  const platformRaw = normalizeOptionalFlag(flags.values.platform) ?? "IOS";
+
+  if (platformRaw !== "IOS" && platformRaw !== "MAC_OS") {
+    throw new InfrastructureError(
+      "Invalid --platform. Allowed values: IOS, MAC_OS."
+    );
+  }
+
+  return {
+    kind: "apps-read-metadata",
+    json: flags.booleans.has("json"),
+    appReference,
+    outputPath,
     ...(version ? { version } : {}),
     platform: platformRaw
   };
@@ -474,6 +512,7 @@ Usage:
   appstore-tools apps list [--json]
   appstore-tools ipa generate [--output-ipa <path>] [xcodebuild/custom options] [--json]
   appstore-tools ipa export-options [--output-plist <path>] [--team-id <id>] [--signing-style <automatic|manual>] [--force] [--json]
+  appstore-tools apps read-metadata --app <appId|bundleId> [--output <path>] [--version <x.y.z>] [--platform <IOS|MAC_OS>] [--json]
   appstore-tools apps update-metadata --metadata <path> --app <appId|bundleId> [--version <x.y.z>] [--platform <IOS|MAC_OS>] [--text-only] [--screenshots-only] [--json] [--apply]
   appstore-tools builds upload [--app <appId|bundleId>] [--version <x.y.z>] [--build-number <n>] [--ipa <path> | generation options] [--wait-processing] [--json] [--apply]
   appstore-tools certificates create [--type <certificateType>] [--common-name <name>] [--output-dir <path>] [--keychain <path>] [--skip-install] [--json]
@@ -567,6 +606,10 @@ async function handleCliCommand(
 
   if (command.kind === "apps-list") {
     return appsListCommand(client, { json: command.json });
+  }
+
+  if (command.kind === "apps-read-metadata") {
+    return appsReadMetadataCommand(client, command);
   }
 
   if (command.kind === "apps-update-metadata") {

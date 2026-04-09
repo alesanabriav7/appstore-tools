@@ -91,6 +91,7 @@ interface AppInfoLocalizationData {
   readonly id: string;
   readonly attributes: {
     readonly locale?: string;
+    readonly name?: string;
     readonly subtitle?: string;
     readonly privacyPolicyUrl?: string;
   };
@@ -124,11 +125,13 @@ interface AgeRatingDeclarationResponse {
 // ---------------------------------------------------------------------------
 
 export interface MetadataLocale {
+  readonly name?: string;
   readonly description?: string;
   readonly keywords?: string;
   readonly promotionalText?: string;
   readonly supportUrl?: string;
   readonly marketingUrl?: string;
+  readonly whatsNewText?: string;
   readonly subtitle?: string;
   readonly privacyPolicyUrl?: string;
   readonly screenshots?: Readonly<Record<string, readonly string[]>>;
@@ -153,6 +156,7 @@ export interface ReviewContact {
 
 export interface AppMetadata {
   readonly primaryCategory?: string;
+  readonly secondaryCategory?: string;
   readonly copyright?: string;
   readonly ageRating?: AgeRatingDeclaration;
   readonly reviewContact?: ReviewContact;
@@ -184,6 +188,7 @@ export interface MetadataUpdateResult {
   readonly appInfoLocalizationsCreated: number;
   readonly copyrightUpdated: boolean;
   readonly categoryUpdated: boolean;
+  readonly categorySecondaryUpdated: boolean;
   readonly ageRatingUpdated: boolean;
   readonly reviewContactUpdated: boolean;
 }
@@ -237,7 +242,7 @@ async function getVersionLocalizations(
     path: `/v1/appStoreVersions/${versionId}/appStoreVersionLocalizations`,
     query: {
       "fields[appStoreVersionLocalizations]":
-        "locale,description,keywords,promotionalText,supportUrl,marketingUrl"
+        "locale,description,keywords,promotionalText,supportUrl,marketingUrl,whatsNew"
     }
   });
 
@@ -435,7 +440,7 @@ async function getAppInfoLocalizations(
     method: "GET",
     path: `/v1/appInfos/${appInfoId}/appInfoLocalizations`,
     query: {
-      "fields[appInfoLocalizations]": "locale,subtitle,privacyPolicyUrl"
+      "fields[appInfoLocalizations]": "locale,name,subtitle,privacyPolicyUrl"
     }
   });
 
@@ -633,12 +638,37 @@ async function updateAppInfoCategory(
   });
 }
 
+async function updateAppInfoSecondaryCategory(
+  client: AppStoreConnectClient,
+  appInfoId: string,
+  category: string
+): Promise<void> {
+  await client.request<void>({
+    method: "PATCH",
+    path: `/v1/appInfos/${appInfoId}`,
+    body: {
+      data: {
+        type: "appInfos",
+        id: appInfoId,
+        relationships: {
+          secondaryCategory: {
+            data: {
+              type: "appCategories",
+              id: category
+            }
+          }
+        }
+      }
+    }
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
-const TEXT_FIELDS = ["description", "keywords", "promotionalText", "supportUrl", "marketingUrl"] as const;
-const APP_INFO_FIELDS = ["subtitle", "privacyPolicyUrl"] as const;
+const TEXT_FIELDS = ["description", "keywords", "promotionalText", "supportUrl", "marketingUrl", "whatsNewText"] as const;
+const APP_INFO_FIELDS = ["name", "subtitle", "privacyPolicyUrl"] as const;
 const AGE_RATING_BOOLEAN_FIELDS = ["gamblingAndContests", "unrestrictedWebAccess"] as const;
 const AGE_RATING_FREQUENCY_FIELDS = [
   "horrorOrFearThemes",
@@ -660,6 +690,10 @@ function validateAppMetadata(value: unknown): AppMetadata {
 
   if ("primaryCategory" in obj && typeof obj.primaryCategory !== "string") {
     throw new DomainError('Invalid manifest: "_app.primaryCategory" must be a string.');
+  }
+
+  if ("secondaryCategory" in obj && typeof obj.secondaryCategory !== "string") {
+    throw new DomainError('Invalid manifest: "_app.secondaryCategory" must be a string.');
   }
 
   if ("copyright" in obj && typeof obj.copyright !== "string") {
@@ -770,6 +804,7 @@ function extractTextFields(locale: MetadataLocale): Record<string, string> {
   if (locale.promotionalText !== undefined) fields.promotionalText = locale.promotionalText;
   if (locale.supportUrl !== undefined) fields.supportUrl = locale.supportUrl;
   if (locale.marketingUrl !== undefined) fields.marketingUrl = locale.marketingUrl;
+  if (locale.whatsNewText !== undefined) fields.whatsNew = locale.whatsNewText;
 
   return fields;
 }
@@ -777,6 +812,7 @@ function extractTextFields(locale: MetadataLocale): Record<string, string> {
 function extractAppInfoFields(locale: MetadataLocale): Record<string, string> {
   const fields: Record<string, string> = {};
 
+  if (locale.name !== undefined) fields.name = locale.name;
   if (locale.subtitle !== undefined) fields.subtitle = locale.subtitle;
   if (locale.privacyPolicyUrl !== undefined) fields.privacyPolicyUrl = locale.privacyPolicyUrl;
 
@@ -832,11 +868,33 @@ export async function updateMetadata(
 ): Promise<MetadataUpdateResult> {
   const manifestBasePath = options?.manifestBasePath ?? process.cwd();
 
-  // 1. Find editable version
+  if (input.textOnly && input.screenshotsOnly) {
+    throw new Error("--text-only and --screenshots-only are mutually exclusive");
+  }
+
+  const plannedOperations: string[] = [];
+  const locales = getLocaleKeys(input.manifest);
+  const appMeta = input.appMetadata ?? getAppMetadata(input.manifest);
+
+  const shouldUpdateText = !input.screenshotsOnly;
+  const shouldUpdateScreenshots = !input.textOnly;
+
+  // Determine whether any changes require an editable version
+  const hasTextChanges = shouldUpdateText && locales.some((locale) => {
+    const localeData = input.manifest[locale] as MetadataLocale | undefined;
+    return localeData ? Object.keys(extractTextFields(localeData)).length > 0 : false;
+  });
+  const hasScreenshotChanges = shouldUpdateScreenshots && locales.some((locale) => {
+    const localeData = input.manifest[locale] as MetadataLocale | undefined;
+    return localeData ? Boolean(localeData.screenshots) : false;
+  });
+  const requiresEditableVersion = hasTextChanges || hasScreenshotChanges;
+
+  // 1. Find editable version (only required for text/screenshot changes)
   const versions = await getAppStoreVersions(client, input.appId, input.platform, input.version);
   const editableVersion = findEditableVersion(versions);
 
-  if (!editableVersion) {
+  if (requiresEditableVersion && !editableVersion) {
     throw new DomainError(
       "No editable App Store version found. The version must be in one of these states: " +
         [...EDITABLE_STATES].join(", ") +
@@ -844,28 +902,18 @@ export async function updateMetadata(
     );
   }
 
-  // 2. Build planned operations
-  const plannedOperations: string[] = [];
-  const locales = getLocaleKeys(input.manifest);
-  const appMeta = input.appMetadata ?? getAppMetadata(input.manifest);
-
-  // 3. Get existing localizations
-  const existingLocalizations = await getVersionLocalizations(client, editableVersion.id);
+  // 2. Get existing localizations (only when we have an editable version)
   const localeToId = new Map<string, string>();
 
-  for (const loc of existingLocalizations.data) {
-    if (loc.attributes.locale) {
-      localeToId.set(loc.attributes.locale, loc.id);
+  if (editableVersion) {
+    const existingLocalizations = await getVersionLocalizations(client, editableVersion.id);
+
+    for (const loc of existingLocalizations.data) {
+      if (loc.attributes.locale) {
+        localeToId.set(loc.attributes.locale, loc.id);
+      }
     }
   }
-
-  if (input.textOnly && input.screenshotsOnly) {
-    throw new Error("--text-only and --screenshots-only are mutually exclusive");
-  }
-
-  // Plan text operations
-  const shouldUpdateText = !input.screenshotsOnly;
-  const shouldUpdateScreenshots = !input.textOnly;
 
   if (shouldUpdateText) {
     for (const locale of locales) {
@@ -911,6 +959,7 @@ export async function updateMetadata(
   const needsAppInfoId =
     (hasAppInfoFields && shouldUpdateText) ||
     !!appMeta?.primaryCategory ||
+    !!appMeta?.secondaryCategory ||
     !!appMeta?.ageRating;
 
   let appInfoId: string | undefined;
@@ -961,6 +1010,10 @@ export async function updateMetadata(
       plannedOperations.push(`Update primary category to ${appMeta.primaryCategory}`);
     }
 
+    if (appMeta.secondaryCategory) {
+      plannedOperations.push(`Update secondary category to ${appMeta.secondaryCategory}`);
+    }
+
     if (appMeta.ageRating) {
       plannedOperations.push("Update age rating declaration");
     }
@@ -973,8 +1026,8 @@ export async function updateMetadata(
   if (!input.apply) {
     return {
       mode: "dry-run",
-      versionId: editableVersion.id,
-      versionString: editableVersion.versionString,
+      versionId: editableVersion?.id ?? "",
+      versionString: editableVersion?.versionString ?? "",
       plannedOperations,
       localizationsUpdated: 0,
       localizationsCreated: 0,
@@ -984,6 +1037,7 @@ export async function updateMetadata(
       appInfoLocalizationsCreated: 0,
       copyrightUpdated: false,
       categoryUpdated: false,
+      categorySecondaryUpdated: false,
       ageRatingUpdated: false,
       reviewContactUpdated: false
     };
@@ -1008,7 +1062,7 @@ export async function updateMetadata(
         await updateLocalization(client, existingId, fields);
         localizationsUpdated += 1;
       } else {
-        const newId = await createLocalization(client, editableVersion.id, locale, fields);
+        const newId = await createLocalization(client, editableVersion!.id, locale, fields);
         localeToId.set(locale, newId);
         localizationsCreated += 1;
       }
@@ -1117,12 +1171,13 @@ export async function updateMetadata(
   // 7. Apply app-level metadata
   let copyrightUpdated = false;
   let categoryUpdated = false;
+  let categorySecondaryUpdated = false;
   let ageRatingUpdated = false;
   let reviewContactUpdated = false;
 
   if (appMeta) {
-    // Copyright — PATCH appStoreVersion
-    if (appMeta.copyright) {
+    // Copyright — PATCH appStoreVersion (requires editable version)
+    if (appMeta.copyright && editableVersion) {
       await updateAppStoreVersion(client, editableVersion.id, { copyright: appMeta.copyright });
       copyrightUpdated = true;
     }
@@ -1133,6 +1188,11 @@ export async function updateMetadata(
       categoryUpdated = true;
     }
 
+    if (appMeta.secondaryCategory && appInfoId) {
+      await updateAppInfoSecondaryCategory(client, appInfoId, appMeta.secondaryCategory);
+      categorySecondaryUpdated = true;
+    }
+
     // Age rating — GET declaration → PATCH
     if (appMeta.ageRating && appInfoId) {
       const ageRatingDecl = await getAgeRatingDeclaration(client, appInfoId);
@@ -1140,8 +1200,8 @@ export async function updateMetadata(
       ageRatingUpdated = true;
     }
 
-    // Review contact — GET or POST, then PATCH
-    if (appMeta.reviewContact) {
+    // Review contact — GET or POST, then PATCH (requires editable version)
+    if (appMeta.reviewContact && editableVersion) {
       const contactFields: Record<string, string> = {};
 
       for (const field of REVIEW_CONTACT_FIELDS) {
@@ -1166,8 +1226,8 @@ export async function updateMetadata(
 
   return {
     mode: "applied",
-    versionId: editableVersion.id,
-    versionString: editableVersion.versionString,
+    versionId: editableVersion?.id ?? "",
+    versionString: editableVersion?.versionString ?? "",
     plannedOperations,
     localizationsUpdated,
     localizationsCreated,
@@ -1177,6 +1237,7 @@ export async function updateMetadata(
     appInfoLocalizationsCreated,
     copyrightUpdated,
     categoryUpdated,
+    categorySecondaryUpdated,
     ageRatingUpdated,
     reviewContactUpdated
   };
@@ -1271,6 +1332,7 @@ function printMetadataUpdateResult(result: MetadataUpdateResult, app: AppSummary
     console.log(`App info localizations created: ${result.appInfoLocalizationsCreated}`);
     if (result.copyrightUpdated) console.log("Copyright updated");
     if (result.categoryUpdated) console.log("Primary category updated");
+    if (result.categorySecondaryUpdated) console.log("Secondary category updated");
     if (result.ageRatingUpdated) console.log("Age rating declaration updated");
     if (result.reviewContactUpdated) console.log("Review contact updated");
   }

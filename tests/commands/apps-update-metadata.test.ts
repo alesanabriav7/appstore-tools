@@ -1109,4 +1109,354 @@ describe("validateManifest – locale app info fields", () => {
       'locale "en-US" field "privacyPolicyUrl" must be a string'
     );
   });
+
+  it("rejects _app.secondaryCategory when not a string", () => {
+    expect(() => validateManifest({ _app: { secondaryCategory: 123 } })).toThrow(
+      '"_app.secondaryCategory" must be a string'
+    );
+  });
+
+  it("rejects name when not a string", () => {
+    expect(() => validateManifest({ "en-US": { name: 42 } })).toThrow(
+      'locale "en-US" field "name" must be a string'
+    );
+  });
+
+  it("rejects whatsNewText when not a string", () => {
+    expect(() => validateManifest({ "en-US": { whatsNewText: true } })).toThrow(
+      'locale "en-US" field "whatsNewText" must be a string'
+    );
+  });
+});
+
+describe("updateMetadata – name and whatsNewText fields", () => {
+  it("sends name in PATCH appInfoLocalizations request body", async () => {
+    const { client, requests } = createMockClient();
+
+    await updateMetadata(
+      client,
+      baseInput({
+        apply: true,
+        manifest: {
+          "en-US": {
+            name: "Cifro – Budget & Finance"
+          }
+        }
+      })
+    );
+
+    const appInfoLocPatches = requests.filter(
+      (r) => r.method === "PATCH" && r.path.includes("/appInfoLocalizations/")
+    );
+    expect(appInfoLocPatches).toHaveLength(1);
+    const body = appInfoLocPatches[0]!.body as { data: { attributes: Record<string, string> } };
+    expect(body.data.attributes.name).toBe("Cifro – Budget & Finance");
+  });
+
+  it("sends whatsNewText in PATCH appStoreVersionLocalizations request body", async () => {
+    const { client, requests } = createMockClient();
+
+    await updateMetadata(
+      client,
+      baseInput({
+        apply: true,
+        manifest: {
+          "en-US": {
+            whatsNewText: "Bug fixes and performance improvements."
+          }
+        }
+      })
+    );
+
+    const locPatches = requests.filter(
+      (r) => r.method === "PATCH" && r.path.includes("/appStoreVersionLocalizations/")
+    );
+    expect(locPatches).toHaveLength(1);
+    const body = locPatches[0]!.body as { data: { attributes: Record<string, string> } };
+    expect(body.data.attributes.whatsNew).toBe("Bug fixes and performance improvements.");
+  });
+
+  it("includes name in getAppInfoLocalizations fields query param", async () => {
+    const { client, requests } = createMockClient();
+
+    await updateMetadata(
+      client,
+      baseInput({
+        manifest: {
+          "en-US": { name: "My App" }
+        }
+      })
+    );
+
+    const getAppInfoLoc = requests.find(
+      (r) => r.method === "GET" && r.path.includes("/appInfoLocalizations")
+    );
+    expect(getAppInfoLoc).toBeDefined();
+    expect(getAppInfoLoc!.query?.["fields[appInfoLocalizations]"]).toContain("name");
+  });
+
+  it("includes whatsNewText in getVersionLocalizations fields query param", async () => {
+    const { client, requests } = createMockClient();
+
+    await updateMetadata(
+      client,
+      baseInput({
+        manifest: {
+          "en-US": { whatsNewText: "What's new" }
+        }
+      })
+    );
+
+    const getVersionLoc = requests.find(
+      (r) => r.method === "GET" && r.path.includes("/appStoreVersionLocalizations") && !r.path.includes("/appScreenshotSets")
+    );
+    expect(getVersionLoc).toBeDefined();
+    expect(getVersionLoc!.query?.["fields[appStoreVersionLocalizations]"]).toContain("whatsNew");
+  });
+
+  it("dry-run plans app info localization update for name field", async () => {
+    const { client } = createMockClient();
+
+    const result = await updateMetadata(
+      client,
+      baseInput({
+        manifest: {
+          "en-US": { name: "My App Name" }
+        }
+      })
+    );
+
+    expect(result.mode).toBe("dry-run");
+    expect(result.plannedOperations).toContainEqual(
+      expect.stringContaining("Update app info localization for en-US")
+    );
+  });
+
+  it("creates POST for new locale with name field", async () => {
+    const { client, requests } = createMockClient();
+
+    const result = await updateMetadata(
+      client,
+      baseInput({
+        apply: true,
+        manifest: {
+          "es-MX": { name: "Mi Aplicación" }
+        }
+      })
+    );
+
+    expect(result.appInfoLocalizationsCreated).toBe(1);
+
+    const posts = requests.filter(
+      (r) => r.method === "POST" && r.path === "/v1/appInfoLocalizations"
+    );
+    expect(posts).toHaveLength(1);
+    const body = posts[0]!.body as { data: { attributes: Record<string, string> } };
+    expect(body.data.attributes.name).toBe("Mi Aplicación");
+  });
+});
+
+describe("updateMetadata – secondaryCategory", () => {
+  it("applies secondaryCategory via PATCH appInfos", async () => {
+    const { client, requests } = createMockClient();
+
+    const result = await updateMetadata(
+      client,
+      baseInput({
+        apply: true,
+        manifest: {
+          _app: { secondaryCategory: "PRODUCTIVITY" } as never,
+          "en-US": { description: "Test" }
+        }
+      })
+    );
+
+    expect(result.categorySecondaryUpdated).toBe(true);
+
+    const appInfoPatches = requests.filter(
+      (r) => r.method === "PATCH" && r.path.includes("/appInfos/")
+    );
+    expect(appInfoPatches).toHaveLength(1);
+    const body = appInfoPatches[0]!.body as {
+      data: { relationships: { secondaryCategory: { data: { id: string } } } };
+    };
+    expect(body.data.relationships.secondaryCategory.data.id).toBe("PRODUCTIVITY");
+  });
+
+  it("applies both primaryCategory and secondaryCategory in the same run", async () => {
+    const { client, requests } = createMockClient();
+
+    const result = await updateMetadata(
+      client,
+      baseInput({
+        apply: true,
+        manifest: {
+          _app: { primaryCategory: "FINANCE", secondaryCategory: "PRODUCTIVITY" } as never,
+          "en-US": { description: "Test" }
+        }
+      })
+    );
+
+    expect(result.categoryUpdated).toBe(true);
+    expect(result.categorySecondaryUpdated).toBe(true);
+
+    const appInfoPatches = requests.filter(
+      (r) => r.method === "PATCH" && r.path.includes("/appInfos/")
+    );
+    expect(appInfoPatches).toHaveLength(2);
+  });
+
+  it("dry-run plans secondary category operation", async () => {
+    const { client } = createMockClient();
+
+    const result = await updateMetadata(
+      client,
+      baseInput({
+        manifest: {
+          _app: { secondaryCategory: "PRODUCTIVITY" } as never,
+          "en-US": { description: "Test" }
+        }
+      })
+    );
+
+    expect(result.mode).toBe("dry-run");
+    expect(result.plannedOperations).toContainEqual(
+      "Update secondary category to PRODUCTIVITY"
+    );
+    expect(result.categorySecondaryUpdated).toBe(false);
+  });
+
+  it("categorySecondaryUpdated is false when no secondaryCategory in manifest", async () => {
+    const { client } = createMockClient();
+
+    const result = await updateMetadata(client, baseInput({ apply: true }));
+
+    expect(result.categorySecondaryUpdated).toBe(false);
+  });
+});
+
+describe("updateMetadata – appInfo-only updates without editable version", () => {
+  const nonEditableClient = () =>
+    createMockClient({
+      versions: [
+        {
+          id: "version-1",
+          versionString: "1.0.0",
+          appStoreState: "READY_FOR_SALE",
+          platform: "IOS"
+        }
+      ]
+    });
+
+  it("applies name without an editable version", async () => {
+    const { client, requests } = nonEditableClient();
+
+    const result = await updateMetadata(
+      client,
+      baseInput({
+        apply: true,
+        manifest: { "en-US": { name: "New App Name" } }
+      })
+    );
+
+    expect(result.appInfoLocalizationsUpdated).toBe(1);
+
+    const patches = requests.filter(
+      (r) => r.method === "PATCH" && r.path.includes("/appInfoLocalizations/")
+    );
+    expect(patches).toHaveLength(1);
+    const body = patches[0]!.body as { data: { attributes: Record<string, string> } };
+    expect(body.data.attributes.name).toBe("New App Name");
+  });
+
+  it("applies subtitle and privacyPolicyUrl without an editable version", async () => {
+    const { client, requests } = nonEditableClient();
+
+    const result = await updateMetadata(
+      client,
+      baseInput({
+        apply: true,
+        manifest: {
+          "en-US": {
+            subtitle: "My Subtitle",
+            privacyPolicyUrl: "https://example.com/privacy"
+          }
+        }
+      })
+    );
+
+    expect(result.appInfoLocalizationsUpdated).toBe(1);
+    expect(result.localizationsUpdated).toBe(0);
+
+    const patches = requests.filter(
+      (r) => r.method === "PATCH" && r.path.includes("/appInfoLocalizations/")
+    );
+    expect(patches).toHaveLength(1);
+  });
+
+  it("applies primaryCategory and secondaryCategory without an editable version", async () => {
+    const { client, requests } = nonEditableClient();
+
+    const result = await updateMetadata(
+      client,
+      baseInput({
+        apply: true,
+        manifest: {
+          _app: { primaryCategory: "FINANCE", secondaryCategory: "PRODUCTIVITY" } as never,
+          "en-US": { name: "My App" }
+        }
+      })
+    );
+
+    expect(result.categoryUpdated).toBe(true);
+    expect(result.categorySecondaryUpdated).toBe(true);
+    expect(result.localizationsUpdated).toBe(0);
+  });
+
+  it("throws when text fields are present and no editable version", async () => {
+    const { client } = nonEditableClient();
+
+    await expect(
+      updateMetadata(
+        client,
+        baseInput({
+          apply: true,
+          manifest: { "en-US": { description: "Some description" } }
+        })
+      )
+    ).rejects.toThrow(DomainError);
+  });
+
+  it("throws when screenshots are present and no editable version", async () => {
+    const { client } = nonEditableClient();
+
+    await expect(
+      updateMetadata(
+        client,
+        baseInput({
+          apply: true,
+          manifest: {
+            "en-US": { screenshots: { APP_IPHONE_67: ["./s.png"] } }
+          }
+        })
+      )
+    ).rejects.toThrow(DomainError);
+  });
+
+  it("dry-run returns empty versionId when no editable version and only appInfo fields", async () => {
+    const { client } = nonEditableClient();
+
+    const result = await updateMetadata(
+      client,
+      baseInput({
+        manifest: { "en-US": { name: "App Name" } }
+      })
+    );
+
+    expect(result.mode).toBe("dry-run");
+    expect(result.versionId).toBe("");
+    expect(result.plannedOperations).toContainEqual(
+      expect.stringContaining("Update app info localization for en-US")
+    );
+  });
 });

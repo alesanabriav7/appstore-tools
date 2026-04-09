@@ -24,6 +24,12 @@ export {
 // Commands
 export { appsListCommand, listApps, type AppSummary } from "./commands/apps-list.js";
 export {
+  appsReadMetadataCommand,
+  readMetadata,
+  type AppsReadMetadataInput,
+  type AppsReadMetadataResult
+} from "./commands/apps-read-metadata.js";
+export {
   appsUpdateMetadataCommand,
   updateMetadata,
   type AgeRatingDeclaration,
@@ -73,6 +79,7 @@ export {
   resolveCliEnvironment,
   runCli,
   type AppsListCliCommand,
+  type AppsReadMetadataCliCommand,
   type AppsUpdateMetadataCliCommand,
   type BuildsUploadCliCommand,
   type CliCommand,

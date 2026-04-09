@@ -201,6 +201,32 @@ npx appstore-tools certificates create \
   --json
 ```
 
+### Read metadata
+
+Pull the current live metadata from App Store Connect and write it to a JSON file in the same format accepted by `update-metadata`.
+
+```bash
+npx appstore-tools apps read-metadata --app com.example.myapp
+```
+
+Outputs `./metadata.json` by default. Use `--output` to change the path:
+
+```bash
+npx appstore-tools apps read-metadata \
+  --app com.example.myapp \
+  --output ./metadata/current.json \
+  --version 2.0.0 \
+  --platform IOS \
+  --json
+```
+
+- `--output` — output file path (default: `./metadata.json`)
+- `--version` — target a specific version (defaults to the first version returned)
+- `--platform` — `IOS` (default) or `MAC_OS`
+- `--json` — print result summary as JSON instead of human-readable output
+
+The output file uses the same manifest format as `update-metadata`, so you can read, edit, and push back in one round-trip.
+
 ### Update metadata
 
 Update App Store listing text and screenshots from a JSON manifest.
@@ -243,9 +269,11 @@ The manifest is a JSON object keyed by locale, with an optional `_app` key for a
 
 | Field | Description |
 |---|---|
+| `name` | App name |
 | `description` | App description |
 | `keywords` | Comma-separated keywords |
 | `promotionalText` | Promotional text |
+| `whatsNewText` | What's new / release notes |
 | `supportUrl` | Support URL |
 | `marketingUrl` | Marketing URL |
 | `subtitle` | App subtitle |
@@ -258,6 +286,7 @@ The manifest is a JSON object keyed by locale, with an optional `_app` key for a
 |---|---|
 | `copyright` | Copyright string |
 | `primaryCategory` | Primary category ID (e.g., `PRODUCTIVITY`) |
+| `secondaryCategory` | Secondary category ID (optional) |
 | `ageRating` | Age rating declaration (see below) |
 | `reviewContact` | Review contact information |
 
@@ -266,6 +295,7 @@ The manifest is a JSON object keyed by locale, with an optional `_app` key for a
   "_app": {
     "copyright": "2025 Acme Inc.",
     "primaryCategory": "PRODUCTIVITY",
+    "secondaryCategory": "FINANCE",
     "ageRating": {
       "gamblingAndContests": false,
       "unrestrictedWebAccess": false,
@@ -283,9 +313,11 @@ The manifest is a JSON object keyed by locale, with an optional `_app` key for a
     }
   },
   "en-US": {
+    "name": "MyApp – Do Things Faster",
     "description": "The best app for doing things.",
     "keywords": "productivity, tools, utilities",
     "promotionalText": "Now with dark mode!",
+    "whatsNewText": "Bug fixes and performance improvements.",
     "supportUrl": "https://example.com/support",
     "marketingUrl": "https://example.com",
     "subtitle": "Do things faster",

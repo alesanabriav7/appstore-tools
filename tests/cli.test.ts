@@ -311,4 +311,65 @@ describe("parseCliCommand", () => {
       json: true
     });
   });
+
+  it("parses apps read-metadata command with defaults", () => {
+    const command = parseCliCommand([
+      "apps",
+      "read-metadata",
+      "--app",
+      "com.example.myapp"
+    ]);
+
+    expect(command).toEqual({
+      kind: "apps-read-metadata",
+      json: false,
+      appReference: "com.example.myapp",
+      outputPath: "./metadata.json",
+      platform: "IOS"
+    });
+  });
+
+  it("parses apps read-metadata command with all flags", () => {
+    const command = parseCliCommand([
+      "apps",
+      "read-metadata",
+      "--app",
+      "com.example.myapp",
+      "--output",
+      "./out/meta.json",
+      "--version",
+      "2.0.0",
+      "--platform",
+      "MAC_OS",
+      "--json"
+    ]);
+
+    expect(command).toEqual({
+      kind: "apps-read-metadata",
+      json: true,
+      appReference: "com.example.myapp",
+      outputPath: "./out/meta.json",
+      version: "2.0.0",
+      platform: "MAC_OS"
+    });
+  });
+
+  it("throws when apps read-metadata is missing --app flag", () => {
+    expect(() =>
+      parseCliCommand(["apps", "read-metadata"])
+    ).toThrowError(InfrastructureError);
+  });
+
+  it("throws when apps read-metadata has invalid platform", () => {
+    expect(() =>
+      parseCliCommand([
+        "apps",
+        "read-metadata",
+        "--app",
+        "com.example.myapp",
+        "--platform",
+        "TVOS"
+      ])
+    ).toThrowError(InfrastructureError);
+  });
 });
