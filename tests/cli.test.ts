@@ -360,6 +360,116 @@ describe("parseCliCommand", () => {
     ).toThrowError(InfrastructureError);
   });
 
+  it("parses apps create-version as a dry-run", () => {
+    expect(
+      parseCliCommand([
+        "apps",
+        "create-version",
+        "--app",
+        "6759523370",
+        "--version",
+        "1.2.3",
+        "--platform",
+        "IOS"
+      ])
+    ).toEqual({
+      kind: "apps-create-version",
+      json: false,
+      apply: false,
+      appReference: "6759523370",
+      version: "1.2.3",
+      platform: "IOS"
+    });
+  });
+
+  it("parses analytics, sales, and ranks commands", () => {
+    expect(
+      parseCliCommand(["analytics", "setup", "--app", "6759523370", "--snapshot", "--apply"])
+    ).toMatchObject({
+      kind: "analytics-setup",
+      snapshot: true,
+      apply: true,
+      appReference: "6759523370"
+    });
+
+    expect(
+      parseCliCommand([
+        "analytics",
+        "fetch",
+        "--app",
+        "6759523370",
+        "--from",
+        "2026-10-01",
+        "--to",
+        "2026-10-10",
+        "--reports",
+        "discovery,downloads",
+        "--format",
+        "csv"
+      ])
+    ).toMatchObject({
+      kind: "analytics-fetch",
+      from: "2026-10-01",
+      to: "2026-10-10",
+      reports: "discovery,downloads",
+      format: "csv",
+      granularity: "DAILY",
+      outDir: "data/"
+    });
+
+    expect(
+      parseCliCommand(["sales", "fetch", "--date", "2026-10-12", "--vendor", "87654321"])
+    ).toEqual({
+      kind: "sales-fetch",
+      date: "2026-10-12",
+      vendorNumber: "87654321",
+      format: "csv"
+    });
+
+    expect(
+      parseCliCommand([
+        "ranks",
+        "check",
+        "--app",
+        "6759523370",
+        "--keywords",
+        "keywords.txt",
+        "--country",
+        "co,us",
+        "--out",
+        "ranks.csv"
+      ])
+    ).toEqual({
+      kind: "ranks-check",
+      json: false,
+      appReference: "6759523370",
+      keywordsPath: "keywords.txt",
+      countries: "co,us",
+      outPath: "ranks.csv"
+    });
+  });
+
+  it("parses update-metadata --create-version", () => {
+    expect(
+      parseCliCommand([
+        "apps",
+        "update-metadata",
+        "--app",
+        "6759523370",
+        "--metadata",
+        "./metadata.json",
+        "--version",
+        "1.2.3",
+        "--create-version"
+      ])
+    ).toMatchObject({
+      kind: "apps-update-metadata",
+      createVersion: true,
+      apply: false,
+      version: "1.2.3"
+    });
+  });
+
   it("throws when apps read-metadata has invalid platform", () => {
     expect(() =>
       parseCliCommand([

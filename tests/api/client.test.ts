@@ -94,6 +94,33 @@ describe("AppStoreConnectClient", () => {
       expect(isValidSignature).toBe(true);
     });
 
+    it("requestBinary sends the bearer token and returns raw bytes", async () => {
+      const clock = new MutableClock(1_700_000_000);
+      let authorization = "";
+      const client = new AppStoreConnectClient(
+        {
+          issuerId: "issuer-id",
+          keyId: "ABC123DEFG",
+          privateKey: privateKeyPem.privateKey
+        },
+        {
+          clock,
+          fetchLike: async (_input, init) => {
+            authorization = new Headers(init?.headers).get("authorization") ?? "";
+            return new Response(Buffer.from([1, 2, 3, 4]), { status: 200 });
+          }
+        }
+      );
+
+      const response = await client.requestBinary({
+        method: "GET",
+        path: "/v1/salesReports"
+      });
+
+      expect(authorization.startsWith("Bearer ")).toBe(true);
+      expect([...response.data]).toEqual([1, 2, 3, 4]);
+    });
+
     it("returns cached token until refresh window", async () => {
       const clock = new MutableClock(1_000);
       const client = new AppStoreConnectClient(

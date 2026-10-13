@@ -31,15 +31,46 @@ export {
 } from "./commands/apps-read-metadata.js";
 export {
   appsUpdateMetadataCommand,
+  selectEditableAppInfo,
   updateMetadata,
   type AgeRatingDeclaration,
+  type AppInfoCandidate,
   type AppMetadata,
+  type EditableVersion,
   type MetadataManifest,
   type MetadataLocale,
   type MetadataUpdateInput,
   type MetadataUpdateResult,
   type ReviewContact
 } from "./commands/apps-update-metadata.js";
+export {
+  appsCreateVersionCommand,
+  createAppStoreVersion,
+  type AppStorePlatform,
+  type CreateAppStoreVersionInput,
+  type CreateVersionCommandResult,
+  type CreatedAppStoreVersion
+} from "./commands/apps-create-version.js";
+export { analyticsSetupCommand } from "./commands/analytics-setup.js";
+export { analyticsFetchCommand } from "./commands/analytics-fetch.js";
+export { analyticsSummaryCommand } from "./commands/analytics-summary.js";
+export { salesFetchCommand } from "./commands/sales-fetch.js";
+export { ranksCheckCommand } from "./commands/ranks-check.js";
+export {
+  fetchAnalytics,
+  type FetchAnalyticsInput,
+  type FetchAnalyticsResult
+} from "./analytics/fetch.js";
+export {
+  setupAnalytics,
+  type AnalyticsSetupResult
+} from "./analytics/requests.js";
+export {
+  summarizeDay,
+  type DailyKpi
+} from "./analytics/metrics.js";
+export { fetchSalesReport, type SalesReport } from "./sales/sales-report.js";
+export { checkRanks, type RankRow } from "./ranks/itunes-search.js";
 export {
   buildsUploadCommand,
   uploadBuild,
@@ -78,6 +109,10 @@ export {
   parseCliCommand,
   resolveCliEnvironment,
   runCli,
+  type AnalyticsFetchCliCommand,
+  type AnalyticsSetupCliCommand,
+  type AnalyticsSummaryCliCommand,
+  type AppsCreateVersionCliCommand,
   type AppsListCliCommand,
   type AppsReadMetadataCliCommand,
   type AppsUpdateMetadataCliCommand,
@@ -86,5 +121,7 @@ export {
   type CertificatesCreateCliCommand,
   type HelpCliCommand,
   type IpaExportOptionsCliCommand,
-  type IpaGenerateCliCommand
+  type IpaGenerateCliCommand,
+  type RanksCheckCliCommand,
+  type SalesFetchCliCommand
 } from "./cli.js";

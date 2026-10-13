@@ -260,6 +260,9 @@ npx appstore-tools apps update-metadata \
 - `--screenshots-only` — skip text updates, only upload screenshots
 - `--version` — target a specific version (defaults to the latest editable version)
 - `--platform` — `IOS` (default) or `MAC_OS`
+- `--create-version` — when no editable version exists, create `--version` (`POST /v1/appStoreVersions`). Dry-run plans the create; `--apply` performs it.
+
+Name, subtitle, and privacy URL updates use the editable app info (`appStoreState` or `state` in `PREPARE_FOR_SUBMISSION`, `DEVELOPER_REJECTED`, `REJECTED`, `METADATA_REJECTED`, or `WAITING_FOR_REVIEW`), or the app info linked to the selected editable version. The command fails if none match, instead of writing the live App Store record.
 
 #### Manifest format
 
@@ -340,6 +343,78 @@ The manifest is a JSON object keyed by locale, with an optional `_app` key for a
 ```
 
 All fields are optional. Screenshot keys are App Store Connect display types (e.g., `APP_IPHONE_67`, `APP_IPAD_PRO_129`). File paths are resolved relative to the manifest file location.
+
+### Create a version
+
+Dry-run by default:
+
+```bash
+npx appstore-tools apps create-version --app 6759523370 --version 1.2.3 --platform IOS
+```
+
+Create it:
+
+```bash
+npx appstore-tools apps create-version --app 6759523370 --version 1.2.3 --apply
+```
+
+`6759523370` is the App Store ID for Cifro. `--app` also accepts a bundle ID.
+
+### Analytics
+
+Analytics uses the App Store Connect Analytics Reports API. Creating a report request requires an **Admin** API key. After the first request exists, a Sales and Reports or Finance key can download files.
+
+Setup is dry-run unless you pass `--apply`. It creates an `ONGOING` request when none exists or the previous one has `stoppedDueToInactivity`. `--snapshot` also ensures a `ONE_TIME_SNAPSHOT` request.
+
+```bash
+npx appstore-tools analytics setup --app 6759523370
+npx appstore-tools analytics setup --app 6759523370 --snapshot --apply
+```
+
+Fetch daily report instances, gunzip each segment, and upsert rows under `data/<appId>/`. The latest `processingDate` replaces that report date.
+
+```bash
+npx appstore-tools analytics fetch \
+  --app 6759523370 \
+  --from 2026-10-01 \
+  --to 2026-10-10 \
+  --reports discovery,downloads,installs,sessions,crashes \
+  --granularity DAILY \
+  --out data/ \
+  --format jsonl
+```
+
+Segment files are downloaded from the presigned URL **without** the App Store Connect bearer token.
+
+Summarize one day from the local ledger (`data/` by default, or `--in`):
+
+```bash
+npx appstore-tools analytics summary --app 6759523370 --date 2026-10-08 --json
+```
+
+The JSON object includes `date`, `impressions`, `productPageViews`, `firstTimeDownloads`, `redownloads`, `conversionRate` (downloads / unique product page views), `bySource`, `sessions`, `crashes`, `isComplete`, and `thresholded`.
+
+`isComplete` uses these lags after the event date: discovery 3 days, downloads 2 days, installs/sessions/crashes 5 days.
+
+### Sales
+
+Downloads the daily Sales summary (`SALES` / `SUMMARY` / `DAILY` / version `1_0`) and prints the gunzipped TSV as CSV or JSON. Vendor comes from `--vendor` or `ASC_VENDOR_NUMBER`.
+
+```bash
+npx appstore-tools sales fetch --date 2026-10-12 --format csv
+```
+
+### Keyword ranks
+
+Checks the public iTunes Search API (no App Store Connect credentials). One request every 3 seconds. Rank is the 1-based position in the software results, or `>200`.
+
+```bash
+npx appstore-tools ranks check \
+  --app 6759523370 \
+  --keywords keywords.txt \
+  --country co,us \
+  --out ranks.csv
+```
 
 ### Upload build
 
@@ -447,9 +522,18 @@ src/
   api/
     client.ts        # HTTP client with JWT auth
     types.ts         # Shared upload operation types
+  analytics/         # Analytics Reports requests, TSV, ledger, KPIs
+  sales/
+    sales-report.ts  # daily Sales summary download
+  ranks/
+    itunes-search.ts # iTunes Search keyword ranks
   commands/
     apps-list.ts     # apps list command
+    apps-create-version.ts # apps create-version command
     apps-update-metadata.ts # apps update-metadata command
+    analytics-*.ts   # analytics setup, fetch, summary
+    sales-fetch.ts   # sales fetch command
+    ranks-check.ts   # ranks check command
     builds-upload.ts # builds upload command
     certificates-create.ts # certificate create command
     ipa-generate.ts  # ipa generate command

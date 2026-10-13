@@ -13,6 +13,7 @@ import {
   parseUploadOperations,
   type UploadOperation
 } from "../api/types.js";
+import { createAppStoreVersion } from "./apps-create-version.js";
 import { listApps, type AppSummary } from "./apps-list.js";
 
 // ---------------------------------------------------------------------------
@@ -80,11 +81,25 @@ interface ScreenshotResponse {
   };
 }
 
+interface AppInfoResource {
+  readonly id: string;
+  readonly type: string;
+  readonly attributes?: {
+    readonly appStoreState?: string;
+    readonly state?: string;
+  };
+  readonly relationships?: {
+    readonly appStoreVersion?: {
+      readonly data?: {
+        readonly id?: string;
+        readonly type?: string;
+      };
+    };
+  };
+}
+
 interface AppInfosResponse {
-  readonly data: readonly {
-    readonly id: string;
-    readonly type: string;
-  }[];
+  readonly data: readonly AppInfoResource[];
 }
 
 interface AppInfoLocalizationData {
@@ -173,6 +188,7 @@ export interface MetadataUpdateInput {
   readonly textOnly: boolean;
   readonly screenshotsOnly: boolean;
   readonly apply: boolean;
+  readonly createVersion?: boolean;
 }
 
 export interface MetadataUpdateResult {
@@ -191,6 +207,7 @@ export interface MetadataUpdateResult {
   readonly categorySecondaryUpdated: boolean;
   readonly ageRatingUpdated: boolean;
   readonly reviewContactUpdated: boolean;
+  readonly versionCreated: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -426,7 +443,10 @@ async function getAppInfos(
 ): Promise<AppInfosResponse> {
   const response = await client.request<AppInfosResponse>({
     method: "GET",
-    path: `/v1/apps/${appId}/appInfos`
+    path: `/v1/apps/${appId}/appInfos`,
+    query: {
+      "fields[appInfos]": "appStoreState,state"
+    }
   });
 
   return response.data;
@@ -827,21 +847,122 @@ function getAppMetadata(manifest: MetadataManifest): AppMetadata | undefined {
   return manifest._app as AppMetadata | undefined;
 }
 
-function findEditableVersion(
-  versions: AppStoreVersionsResponse
-): { readonly id: string; readonly versionString: string } | null {
+export interface EditableVersion {
+  readonly id: string;
+  readonly versionString: string;
+  readonly appStoreState: string;
+}
+
+export interface AppInfoCandidate {
+  readonly id: string;
+  readonly appStoreState?: string;
+  readonly state?: string;
+  readonly linkedVersionId?: string;
+}
+
+function findEditableVersion(versions: AppStoreVersionsResponse): EditableVersion | null {
   for (const version of versions.data) {
     const state = version.attributes.appStoreState;
 
     if (state && EDITABLE_STATES.has(state)) {
       return {
         id: version.id,
-        versionString: version.attributes.versionString ?? "unknown"
+        versionString: version.attributes.versionString ?? "unknown",
+        appStoreState: state
       };
     }
   }
 
   return null;
+}
+
+function appInfoStateValues(info: AppInfoCandidate): readonly string[] {
+  const values: string[] = [];
+
+  if (info.appStoreState) {
+    values.push(info.appStoreState);
+  }
+
+  if (info.state && info.state !== info.appStoreState) {
+    values.push(info.state);
+  }
+
+  return values;
+}
+
+function isEditableAppInfo(info: AppInfoCandidate): boolean {
+  return appInfoStateValues(info).some((value) => EDITABLE_STATES.has(value));
+}
+
+function toAppInfoCandidate(resource: AppInfoResource): AppInfoCandidate {
+  const linkedVersionId = resource.relationships?.appStoreVersion?.data?.id;
+
+  return {
+    id: resource.id,
+    ...(resource.attributes?.appStoreState
+      ? { appStoreState: resource.attributes.appStoreState }
+      : {}),
+    ...(resource.attributes?.state ? { state: resource.attributes.state } : {}),
+    ...(linkedVersionId ? { linkedVersionId } : {})
+  };
+}
+
+/**
+ * Pick the appInfo that can accept name, subtitle, and privacy URL edits.
+ *
+ * Apple returns two appInfos when a live version and a version in preparation
+ * both exist. `appStoreState` (deprecated) and `state` distinguish them.
+ * There is no appStoreVersion relationship on AppInfo in the current OpenAPI,
+ * so "linked to the selected editable version" means:
+ * - a relationship id when the payload includes one, or
+ * - an appInfo whose state equals the selected version's appStoreState.
+ */
+export function selectEditableAppInfo(
+  appInfos: readonly AppInfoCandidate[],
+  editableVersion: EditableVersion | null
+): AppInfoCandidate {
+  if (appInfos.length === 0) {
+    throw new DomainError("No appInfo found for this app.");
+  }
+
+  const linkedById = editableVersion
+    ? appInfos.filter((info) => info.linkedVersionId === editableVersion.id)
+    : [];
+  const linkedByState = editableVersion
+    ? appInfos.filter((info) =>
+        appInfoStateValues(info).includes(editableVersion.appStoreState)
+      )
+    : [];
+  const editable = appInfos.filter((info) => isEditableAppInfo(info));
+
+  if (linkedById.length > 0) {
+    return linkedById.find((info) => isEditableAppInfo(info)) ?? linkedById[0]!;
+  }
+
+  const linkedEditable = editable.filter((info) => linkedByState.includes(info));
+
+  if (linkedEditable.length > 0) {
+    return linkedEditable[0]!;
+  }
+
+  if (editable.length > 0) {
+    return editable[0]!;
+  }
+
+  const found = appInfos
+    .map((info) => {
+      const states = appInfoStateValues(info);
+      const label = states.length > 0 ? states.join("/") : "unknown";
+      return `${info.id} (${label})`;
+    })
+    .join(", ");
+
+  throw new DomainError(
+    "No editable appInfo found for name, subtitle, or privacy policy updates. " +
+      `Expected appStoreState or state in ${[...EDITABLE_STATES].join(", ")}, ` +
+      "or an appInfo linked to the selected editable version. " +
+      `Found: ${found}.`
+  );
 }
 
 function computeMd5(filePath: string): Promise<string> {
@@ -892,13 +1013,42 @@ export async function updateMetadata(
 
   // 1. Find editable version (only required for text/screenshot changes)
   const versions = await getAppStoreVersions(client, input.appId, input.platform, input.version);
-  const editableVersion = findEditableVersion(versions);
+  let editableVersion = findEditableVersion(versions);
+  let versionCreated = false;
 
-  if (requiresEditableVersion && !editableVersion) {
+  if (!editableVersion && input.createVersion) {
+    if (!input.version) {
+      throw new DomainError(
+        "--create-version requires --version <x.y.z> when no editable App Store version exists."
+      );
+    }
+
+    plannedOperations.push(
+      `Create App Store version ${input.version} (${input.platform})`
+    );
+
+    if (input.apply) {
+      const created = await createAppStoreVersion(client, {
+        appId: input.appId,
+        versionString: input.version,
+        platform: input.platform
+      });
+      editableVersion = {
+        id: created.id,
+        versionString: created.versionString,
+        appStoreState: created.appStoreState
+      };
+      versionCreated = true;
+    }
+  }
+
+  const deferVersionForDryRun = Boolean(input.createVersion && !input.apply && !editableVersion);
+
+  if (requiresEditableVersion && !editableVersion && !deferVersionForDryRun) {
     throw new DomainError(
       "No editable App Store version found. The version must be in one of these states: " +
         [...EDITABLE_STATES].join(", ") +
-        "."
+        ". Pass --create-version with --version <x.y.z> to create one."
     );
   }
 
@@ -967,12 +1117,11 @@ export async function updateMetadata(
 
   if (needsAppInfoId) {
     const appInfos = await getAppInfos(client, input.appId);
-
-    if (appInfos.data.length === 0) {
-      throw new DomainError("No appInfo found for this app.");
-    }
-
-    appInfoId = appInfos.data[0]!.id;
+    const selected = selectEditableAppInfo(
+      appInfos.data.map((item) => toAppInfoCandidate(item)),
+      editableVersion
+    );
+    appInfoId = selected.id;
   }
 
   if (hasAppInfoFields && shouldUpdateText && appInfoId) {
@@ -1039,7 +1188,8 @@ export async function updateMetadata(
       categoryUpdated: false,
       categorySecondaryUpdated: false,
       ageRatingUpdated: false,
-      reviewContactUpdated: false
+      reviewContactUpdated: false,
+      versionCreated: false
     };
   }
 
@@ -1239,7 +1389,8 @@ export async function updateMetadata(
     categoryUpdated,
     categorySecondaryUpdated,
     ageRatingUpdated,
-    reviewContactUpdated
+    reviewContactUpdated,
+    versionCreated
   };
 }
 
@@ -1257,6 +1408,7 @@ export async function appsUpdateMetadataCommand(
     readonly textOnly: boolean;
     readonly screenshotsOnly: boolean;
     readonly apply: boolean;
+    readonly createVersion: boolean;
     readonly json: boolean;
   }
 ): Promise<number> {
@@ -1297,7 +1449,8 @@ export async function appsUpdateMetadataCommand(
     manifest,
     textOnly: command.textOnly,
     screenshotsOnly: command.screenshotsOnly,
-    apply: command.apply
+    apply: command.apply,
+    createVersion: command.createVersion
   }, {
     manifestBasePath: dirname(resolve(command.metadataPath))
   });
@@ -1335,5 +1488,6 @@ function printMetadataUpdateResult(result: MetadataUpdateResult, app: AppSummary
     if (result.categorySecondaryUpdated) console.log("Secondary category updated");
     if (result.ageRatingUpdated) console.log("Age rating declaration updated");
     if (result.reviewContactUpdated) console.log("Review contact updated");
+    if (result.versionCreated) console.log("App Store version created");
   }
 }

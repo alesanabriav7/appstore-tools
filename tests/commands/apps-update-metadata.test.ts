@@ -57,6 +57,9 @@ function createMockClient(options?: {
   }[];
   readonly appInfos?: readonly {
     readonly id: string;
+    readonly appStoreState?: string;
+    readonly state?: string;
+    readonly linkedVersionId?: string;
   }[];
   readonly appInfoLocalizations?: readonly {
     readonly id: string;
@@ -199,7 +202,44 @@ function createMockClient(options?: {
           status: 200,
           headers: new Headers(),
           data: {
-            data: appInfos.map((ai) => ({ id: ai.id, type: "appInfos" }))
+            data: appInfos.map((ai) => ({
+              id: ai.id,
+              type: "appInfos",
+              attributes: {
+                appStoreState: ai.appStoreState ?? "PREPARE_FOR_SUBMISSION",
+                ...(ai.state ? { state: ai.state } : {})
+              },
+              ...(ai.linkedVersionId
+                ? {
+                    relationships: {
+                      appStoreVersion: {
+                        data: { type: "appStoreVersions", id: ai.linkedVersionId }
+                      }
+                    }
+                  }
+                : {})
+            }))
+          }
+        } as HttpResponse<T>;
+      }
+
+      // POST app store version
+      if (request.method === "POST" && request.path === "/v1/appStoreVersions") {
+        const body = request.body as {
+          data?: { attributes?: { versionString?: string; platform?: string } };
+        };
+        return {
+          status: 201,
+          headers: new Headers(),
+          data: {
+            data: {
+              id: "version-created",
+              attributes: {
+                versionString: body.data?.attributes?.versionString ?? "0.0.0",
+                platform: body.data?.attributes?.platform ?? "IOS",
+                appStoreState: "PREPARE_FOR_SUBMISSION"
+              }
+            }
           }
         } as HttpResponse<T>;
       }
@@ -1441,6 +1481,154 @@ describe("updateMetadata – appInfo-only updates without editable version", () 
         })
       )
     ).rejects.toThrow(DomainError);
+  });
+
+  it("updates the editable appInfo instead of the live appInfo", async () => {
+    const { client, requests } = createMockClient({
+      appInfos: [
+        { id: "appinfo-live", appStoreState: "READY_FOR_SALE" },
+        { id: "appinfo-edit", appStoreState: "PREPARE_FOR_SUBMISSION", state: "PREPARE_FOR_SUBMISSION" }
+      ]
+    });
+
+    await updateMetadata(
+      client,
+      baseInput({
+        apply: true,
+        manifest: { "en-US": { name: "Editable Name" } }
+      })
+    );
+
+    const appInfoGets = requests.filter(
+      (request) => request.method === "GET" && request.path.includes("/appInfoLocalizations")
+    );
+    expect(appInfoGets[0]!.path).toContain("appinfo-edit");
+
+    const patches = requests.filter(
+      (request) => request.method === "PATCH" && request.path.includes("/appInfoLocalizations/")
+    );
+    expect(patches).toHaveLength(1);
+  });
+
+  it("prefers the appInfo linked to the selected editable version", async () => {
+    const { client, requests } = createMockClient({
+      versions: [
+        {
+          id: "version-edit",
+          versionString: "2.0.0",
+          appStoreState: "WAITING_FOR_REVIEW",
+          platform: "IOS"
+        }
+      ],
+      appInfos: [
+        { id: "appinfo-other", appStoreState: "PREPARE_FOR_SUBMISSION" },
+        {
+          id: "appinfo-linked",
+          appStoreState: "READY_FOR_SALE",
+          linkedVersionId: "version-edit"
+        }
+      ]
+    });
+
+    await updateMetadata(
+      client,
+      baseInput({
+        apply: true,
+        manifest: { "en-US": { subtitle: "Linked" } }
+      })
+    );
+
+    const appInfoGets = requests.filter(
+      (request) => request.method === "GET" && request.path.includes("/appInfoLocalizations")
+    );
+    expect(appInfoGets[0]!.path).toContain("appinfo-linked");
+  });
+
+  it("throws a clear error when no appInfo is editable", async () => {
+    const { client } = createMockClient({
+      versions: [
+        {
+          id: "version-1",
+          versionString: "1.0.0",
+          appStoreState: "READY_FOR_SALE",
+          platform: "IOS"
+        }
+      ],
+      appInfos: [
+        { id: "appinfo-live", appStoreState: "READY_FOR_SALE", state: "READY_FOR_DISTRIBUTION" }
+      ]
+    });
+
+    await expect(
+      updateMetadata(
+        client,
+        baseInput({
+          apply: true,
+          manifest: { "en-US": { name: "Nope" } }
+        })
+      )
+    ).rejects.toThrow(/No editable appInfo found/);
+  });
+
+  it("creates a version when --create-version is applied and none is editable", async () => {
+    const { client, requests } = createMockClient({
+      versions: [
+        {
+          id: "version-live",
+          versionString: "1.0.0",
+          appStoreState: "READY_FOR_SALE",
+          platform: "IOS"
+        }
+      ]
+    });
+
+    const result = await updateMetadata(
+      client,
+      baseInput({
+        apply: true,
+        createVersion: true,
+        version: "1.1.0",
+        manifest: { "en-US": { description: "Notes for the new version" } }
+      })
+    );
+
+    expect(result.versionCreated).toBe(true);
+    expect(result.versionId).toBe("version-created");
+    expect(result.versionString).toBe("1.1.0");
+
+    const create = requests.find(
+      (request) => request.method === "POST" && request.path === "/v1/appStoreVersions"
+    );
+    expect(create?.body).toEqual({
+      data: {
+        type: "appStoreVersions",
+        attributes: { platform: "IOS", versionString: "1.1.0" },
+        relationships: { app: { data: { type: "apps", id: "app-1" } } }
+      }
+    });
+  });
+
+  it("plans version creation without posting during dry-run", async () => {
+    const { client, requests } = createMockClient({
+      versions: []
+    });
+
+    const result = await updateMetadata(
+      client,
+      baseInput({
+        apply: false,
+        createVersion: true,
+        version: "2.0.0",
+        manifest: { "en-US": { description: "Planned" } }
+      })
+    );
+
+    expect(result.mode).toBe("dry-run");
+    expect(result.versionCreated).toBe(false);
+    expect(result.plannedOperations[0]).toContain("Create App Store version 2.0.0");
+    expect(
+      requests.some((request) => request.method === "POST" && request.path === "/v1/appStoreVersions")
+    ).toBe(false);
   });
 
   it("dry-run returns empty versionId when no editable version and only appInfo fields", async () => {
