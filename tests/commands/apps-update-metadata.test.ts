@@ -45,10 +45,17 @@ function createMockClient(options?: {
     readonly versionString: string;
     readonly appStoreState: string;
     readonly platform: string;
+    readonly copyright?: string;
   }[];
   readonly localizations?: readonly {
     readonly id: string;
     readonly locale: string;
+    readonly description?: string;
+    readonly keywords?: string;
+    readonly promotionalText?: string;
+    readonly supportUrl?: string;
+    readonly marketingUrl?: string;
+    readonly whatsNew?: string;
   }[];
   readonly screenshotSets?: readonly {
     readonly id: string;
@@ -57,13 +64,23 @@ function createMockClient(options?: {
   }[];
   readonly appInfos?: readonly {
     readonly id: string;
+    readonly appStoreState?: string;
+    readonly state?: string;
+    readonly linkedVersionId?: string;
+    readonly primaryCategoryId?: string;
+    readonly secondaryCategoryId?: string;
   }[];
   readonly appInfoLocalizations?: readonly {
     readonly id: string;
     readonly locale: string;
+    readonly name?: string;
+    readonly subtitle?: string;
+    readonly privacyPolicyUrl?: string;
   }[];
   readonly hasReviewDetail?: boolean;
+  readonly reviewDetailAttributes?: Readonly<Record<string, string>>;
   readonly ageRatingDeclarationId?: string;
+  readonly ageRatingAttributes?: Readonly<Record<string, unknown>>;
 }): {
   client: AppStoreConnectClient;
   requests: HttpRequest[];
@@ -89,7 +106,9 @@ function createMockClient(options?: {
     { id: "appinfoloc-en", locale: "en-US" }
   ];
   const hasReviewDetail = options?.hasReviewDetail ?? false;
+  const reviewDetailAttributes = options?.reviewDetailAttributes ?? {};
   const ageRatingDeclarationId = options?.ageRatingDeclarationId ?? "agerate-1";
+  const ageRatingAttributes = options?.ageRatingAttributes ?? {};
 
   const client = {
     request: async <T>(request: HttpRequest) => {
@@ -106,7 +125,8 @@ function createMockClient(options?: {
               attributes: {
                 versionString: v.versionString,
                 appStoreState: v.appStoreState,
-                platform: v.platform
+                platform: v.platform,
+                ...(v.copyright !== undefined ? { copyright: v.copyright } : {})
               }
             }))
           }
@@ -121,7 +141,15 @@ function createMockClient(options?: {
           data: {
             data: localizations.map((l) => ({
               id: l.id,
-              attributes: { locale: l.locale }
+              attributes: {
+                locale: l.locale,
+                ...(l.description !== undefined ? { description: l.description } : {}),
+                ...(l.keywords !== undefined ? { keywords: l.keywords } : {}),
+                ...(l.promotionalText !== undefined ? { promotionalText: l.promotionalText } : {}),
+                ...(l.supportUrl !== undefined ? { supportUrl: l.supportUrl } : {}),
+                ...(l.marketingUrl !== undefined ? { marketingUrl: l.marketingUrl } : {}),
+                ...(l.whatsNew !== undefined ? { whatsNew: l.whatsNew } : {})
+              }
             }))
           }
         } as HttpResponse<T>;
@@ -199,7 +227,58 @@ function createMockClient(options?: {
           status: 200,
           headers: new Headers(),
           data: {
-            data: appInfos.map((ai) => ({ id: ai.id, type: "appInfos" }))
+            data: appInfos.map((ai) => ({
+              id: ai.id,
+              type: "appInfos",
+              attributes: {
+                appStoreState: ai.appStoreState ?? "PREPARE_FOR_SUBMISSION",
+                ...(ai.state ? { state: ai.state } : {})
+              },
+              relationships: {
+                ...(ai.linkedVersionId
+                  ? {
+                      appStoreVersion: {
+                        data: { type: "appStoreVersions", id: ai.linkedVersionId }
+                      }
+                    }
+                  : {}),
+                ...(ai.primaryCategoryId
+                  ? {
+                      primaryCategory: {
+                        data: { type: "appCategories", id: ai.primaryCategoryId }
+                      }
+                    }
+                  : {}),
+                ...(ai.secondaryCategoryId
+                  ? {
+                      secondaryCategory: {
+                        data: { type: "appCategories", id: ai.secondaryCategoryId }
+                      }
+                    }
+                  : {})
+              }
+            }))
+          }
+        } as HttpResponse<T>;
+      }
+
+      // POST app store version
+      if (request.method === "POST" && request.path === "/v1/appStoreVersions") {
+        const body = request.body as {
+          data?: { attributes?: { versionString?: string; platform?: string } };
+        };
+        return {
+          status: 201,
+          headers: new Headers(),
+          data: {
+            data: {
+              id: "version-created",
+              attributes: {
+                versionString: body.data?.attributes?.versionString ?? "0.0.0",
+                platform: body.data?.attributes?.platform ?? "IOS",
+                appStoreState: "PREPARE_FOR_SUBMISSION"
+              }
+            }
           }
         } as HttpResponse<T>;
       }
@@ -212,7 +291,12 @@ function createMockClient(options?: {
           data: {
             data: appInfoLocalizations.map((l) => ({
               id: l.id,
-              attributes: { locale: l.locale }
+              attributes: {
+                locale: l.locale,
+                ...(l.name !== undefined ? { name: l.name } : {}),
+                ...(l.subtitle !== undefined ? { subtitle: l.subtitle } : {}),
+                ...(l.privacyPolicyUrl !== undefined ? { privacyPolicyUrl: l.privacyPolicyUrl } : {})
+              }
             }))
           }
         } as HttpResponse<T>;
@@ -248,7 +332,7 @@ function createMockClient(options?: {
           status: 200,
           headers: new Headers(),
           data: {
-            data: { id: ageRatingDeclarationId, attributes: {} }
+            data: { id: ageRatingDeclarationId, attributes: ageRatingAttributes }
           }
         } as HttpResponse<T>;
       }
@@ -265,7 +349,7 @@ function createMockClient(options?: {
             status: 200,
             headers: new Headers(),
             data: {
-              data: { id: "review-detail-1", attributes: {} }
+              data: { id: "review-detail-1", attributes: reviewDetailAttributes }
             }
           } as HttpResponse<T>;
         }
@@ -824,10 +908,18 @@ describe("updateMetadata", () => {
     );
 
     expect(result.mode).toBe("dry-run");
-    expect(result.plannedOperations).toContainEqual("Update copyright");
-    expect(result.plannedOperations).toContainEqual("Update primary category to FINANCE");
-    expect(result.plannedOperations).toContainEqual("Update age rating declaration");
-    expect(result.plannedOperations).toContainEqual("Update review contact information");
+    expect(result.plannedOperations).toContainEqual(
+      expect.stringContaining("Update copyright")
+    );
+    expect(result.plannedOperations).toContainEqual(
+      expect.stringContaining('primaryCategory: (none) -> "FINANCE"')
+    );
+    expect(result.plannedOperations).toContainEqual(
+      expect.stringContaining("Update age rating declaration")
+    );
+    expect(result.plannedOperations).toContainEqual(
+      expect.stringContaining("Update review contact information")
+    );
   });
 
   it("applies subtitle and privacyPolicyUrl via app info localizations", async () => {
@@ -1321,7 +1413,7 @@ describe("updateMetadata – secondaryCategory", () => {
 
     expect(result.mode).toBe("dry-run");
     expect(result.plannedOperations).toContainEqual(
-      "Update secondary category to PRODUCTIVITY"
+      expect.stringContaining('secondaryCategory: (none) -> "PRODUCTIVITY"')
     );
     expect(result.categorySecondaryUpdated).toBe(false);
   });
@@ -1443,6 +1535,154 @@ describe("updateMetadata – appInfo-only updates without editable version", () 
     ).rejects.toThrow(DomainError);
   });
 
+  it("updates the editable appInfo instead of the live appInfo", async () => {
+    const { client, requests } = createMockClient({
+      appInfos: [
+        { id: "appinfo-live", appStoreState: "READY_FOR_SALE" },
+        { id: "appinfo-edit", appStoreState: "PREPARE_FOR_SUBMISSION", state: "PREPARE_FOR_SUBMISSION" }
+      ]
+    });
+
+    await updateMetadata(
+      client,
+      baseInput({
+        apply: true,
+        manifest: { "en-US": { name: "Editable Name" } }
+      })
+    );
+
+    const appInfoGets = requests.filter(
+      (request) => request.method === "GET" && request.path.includes("/appInfoLocalizations")
+    );
+    expect(appInfoGets[0]!.path).toContain("appinfo-edit");
+
+    const patches = requests.filter(
+      (request) => request.method === "PATCH" && request.path.includes("/appInfoLocalizations/")
+    );
+    expect(patches).toHaveLength(1);
+  });
+
+  it("prefers the appInfo linked to the selected editable version", async () => {
+    const { client, requests } = createMockClient({
+      versions: [
+        {
+          id: "version-edit",
+          versionString: "2.0.0",
+          appStoreState: "WAITING_FOR_REVIEW",
+          platform: "IOS"
+        }
+      ],
+      appInfos: [
+        { id: "appinfo-other", appStoreState: "PREPARE_FOR_SUBMISSION" },
+        {
+          id: "appinfo-linked",
+          appStoreState: "READY_FOR_SALE",
+          linkedVersionId: "version-edit"
+        }
+      ]
+    });
+
+    await updateMetadata(
+      client,
+      baseInput({
+        apply: true,
+        manifest: { "en-US": { subtitle: "Linked" } }
+      })
+    );
+
+    const appInfoGets = requests.filter(
+      (request) => request.method === "GET" && request.path.includes("/appInfoLocalizations")
+    );
+    expect(appInfoGets[0]!.path).toContain("appinfo-linked");
+  });
+
+  it("throws a clear error when no appInfo is editable", async () => {
+    const { client } = createMockClient({
+      versions: [
+        {
+          id: "version-1",
+          versionString: "1.0.0",
+          appStoreState: "READY_FOR_SALE",
+          platform: "IOS"
+        }
+      ],
+      appInfos: [
+        { id: "appinfo-live", appStoreState: "READY_FOR_SALE", state: "READY_FOR_DISTRIBUTION" }
+      ]
+    });
+
+    await expect(
+      updateMetadata(
+        client,
+        baseInput({
+          apply: true,
+          manifest: { "en-US": { name: "Nope" } }
+        })
+      )
+    ).rejects.toThrow(/No editable appInfo found/);
+  });
+
+  it("creates a version when --create-version is applied and none is editable", async () => {
+    const { client, requests } = createMockClient({
+      versions: [
+        {
+          id: "version-live",
+          versionString: "1.0.0",
+          appStoreState: "READY_FOR_SALE",
+          platform: "IOS"
+        }
+      ]
+    });
+
+    const result = await updateMetadata(
+      client,
+      baseInput({
+        apply: true,
+        createVersion: true,
+        version: "1.1.0",
+        manifest: { "en-US": { description: "Notes for the new version" } }
+      })
+    );
+
+    expect(result.versionCreated).toBe(true);
+    expect(result.versionId).toBe("version-created");
+    expect(result.versionString).toBe("1.1.0");
+
+    const create = requests.find(
+      (request) => request.method === "POST" && request.path === "/v1/appStoreVersions"
+    );
+    expect(create?.body).toEqual({
+      data: {
+        type: "appStoreVersions",
+        attributes: { platform: "IOS", versionString: "1.1.0" },
+        relationships: { app: { data: { type: "apps", id: "app-1" } } }
+      }
+    });
+  });
+
+  it("plans version creation without posting during dry-run", async () => {
+    const { client, requests } = createMockClient({
+      versions: []
+    });
+
+    const result = await updateMetadata(
+      client,
+      baseInput({
+        apply: false,
+        createVersion: true,
+        version: "2.0.0",
+        manifest: { "en-US": { description: "Planned" } }
+      })
+    );
+
+    expect(result.mode).toBe("dry-run");
+    expect(result.versionCreated).toBe(false);
+    expect(result.plannedOperations[0]).toContain("Create App Store version 2.0.0");
+    expect(
+      requests.some((request) => request.method === "POST" && request.path === "/v1/appStoreVersions")
+    ).toBe(false);
+  });
+
   it("dry-run returns empty versionId when no editable version and only appInfo fields", async () => {
     const { client } = nonEditableClient();
 
@@ -1458,5 +1698,157 @@ describe("updateMetadata – appInfo-only updates without editable version", () 
     expect(result.plannedOperations).toContainEqual(
       expect.stringContaining("Update app info localization for en-US")
     );
+  });
+});
+
+describe("updateMetadata – field diffs and no-op skips", () => {
+  it("dry-run shows current versus desired and omits unchanged fields", async () => {
+    const { client } = createMockClient({
+      localizations: [
+        {
+          id: "loc-en",
+          locale: "en-US",
+          description: "Same description",
+          keywords: "old, keywords"
+        }
+      ],
+      appInfoLocalizations: [
+        {
+          id: "appinfoloc-en",
+          locale: "en-US",
+          name: "Same Name",
+          subtitle: "Old subtitle"
+        }
+      ]
+    });
+
+    const result = await updateMetadata(
+      client,
+      baseInput({
+        manifest: {
+          "en-US": {
+            description: "Same description",
+            keywords: "new, keywords",
+            name: "Same Name",
+            subtitle: "New subtitle"
+          }
+        }
+      })
+    );
+
+    expect(result.plannedOperations).toContainEqual(
+      'Update localization for en-US (keywords: "old, keywords" -> "new, keywords")'
+    );
+    expect(result.plannedOperations.join("\n")).not.toContain("description:");
+    expect(result.plannedOperations).toContainEqual(
+      'Update app info localization for en-US (subtitle: "Old subtitle" -> "New subtitle")'
+    );
+    expect(result.plannedOperations.join("\n")).not.toContain("name:");
+  });
+
+  it("does not patch localizations or categories that already match", async () => {
+    const { client, requests } = createMockClient({
+      versions: [
+        {
+          id: "version-1",
+          versionString: "1.0.0",
+          appStoreState: "PREPARE_FOR_SUBMISSION",
+          platform: "IOS",
+          copyright: "2026 Test"
+        }
+      ],
+      localizations: [
+        { id: "loc-en", locale: "en-US", description: "Updated description", keywords: "one, two" }
+      ],
+      appInfos: [
+        {
+          id: "appinfo-1",
+          appStoreState: "PREPARE_FOR_SUBMISSION",
+          primaryCategoryId: "FINANCE"
+        }
+      ],
+      appInfoLocalizations: [
+        { id: "appinfoloc-en", locale: "en-US", name: "My App" }
+      ],
+      ageRatingAttributes: { gamblingAndContests: false },
+      hasReviewDetail: true,
+      reviewDetailAttributes: { contactEmail: "test@test.com" }
+    });
+
+    const result = await updateMetadata(
+      client,
+      baseInput({
+        apply: true,
+        manifest: {
+          _app: {
+            copyright: "2026 Test",
+            primaryCategory: "FINANCE",
+            ageRating: { gamblingAndContests: false },
+            reviewContact: { contactEmail: "test@test.com" }
+          } as never,
+          "en-US": {
+            description: "Updated description",
+            keywords: "one, two",
+            name: "My App"
+          }
+        }
+      })
+    );
+
+    expect(result.plannedOperations).toEqual([]);
+    expect(result.localizationsUpdated).toBe(0);
+    expect(result.appInfoLocalizationsUpdated).toBe(0);
+    expect(result.copyrightUpdated).toBe(false);
+    expect(result.categoryUpdated).toBe(false);
+    expect(result.ageRatingUpdated).toBe(false);
+    expect(result.reviewContactUpdated).toBe(false);
+    expect(
+      requests.some(
+        (request) => request.method === "PATCH" || request.method === "POST"
+      )
+    ).toBe(false);
+  });
+
+  it("patches only the age-rating and review fields that changed", async () => {
+    const { client, requests } = createMockClient({
+      ageRatingAttributes: { gamblingAndContests: false, horrorOrFearThemes: "NONE" },
+      hasReviewDetail: true,
+      reviewDetailAttributes: { contactEmail: "old@test.com", contactFirstName: "Ada" }
+    });
+
+    await updateMetadata(
+      client,
+      baseInput({
+        apply: true,
+        manifest: {
+          _app: {
+            ageRating: { gamblingAndContests: false, horrorOrFearThemes: "INFREQUENT" },
+            reviewContact: { contactEmail: "new@test.com", contactFirstName: "Ada" }
+          } as never,
+          "en-US": { description: "Updated description" }
+        }
+      })
+    );
+
+    const agePatch = requests.find(
+      (request) => request.method === "PATCH" && request.path.includes("/ageRatingDeclarations/")
+    );
+    expect(agePatch?.body).toMatchObject({
+      data: { attributes: { horrorOrFearThemes: "INFREQUENT" } }
+    });
+    const ageAttributes = (agePatch?.body as { data: { attributes: Record<string, unknown> } })
+      .data.attributes;
+    expect(ageAttributes.gamblingAndContests).toBeUndefined();
+
+    const reviewPatch = requests.find(
+      (request) => request.method === "PATCH" && request.path.includes("/appStoreReviewDetails/")
+    );
+    expect(reviewPatch?.body).toMatchObject({
+      data: { attributes: { contactEmail: "new@test.com" } }
+    });
+    const reviewAttributes = (
+      reviewPatch?.body as { data: { attributes: Record<string, string> } }
+    ).data.attributes;
+    expect(reviewAttributes.contactFirstName).toBeUndefined();
   });
 });

@@ -151,6 +151,63 @@ export class AppStoreConnectClient {
   }
 
   public async request<T>(request: HttpRequest): Promise<HttpResponse<T>> {
+    const response = await this.perform(request);
+
+    if (response.status === 204) {
+      return {
+        status: response.status,
+        headers: response.headers,
+        data: undefined as T
+      };
+    }
+
+    const textBody = await response.text();
+
+    if (!textBody) {
+      return {
+        status: response.status,
+        headers: response.headers,
+        data: undefined as T
+      };
+    }
+
+    try {
+      return {
+        status: response.status,
+        headers: response.headers,
+        data: JSON.parse(textBody) as T
+      };
+    } catch (error) {
+      throw new InfrastructureError(
+        "Received invalid JSON from App Store Connect.",
+        error
+      );
+    }
+  }
+
+  /**
+   * Authenticated request that returns the raw body.
+   * Sales and finance reports are gzip bytes, not JSON.
+   */
+  public async requestBinary(request: HttpRequest): Promise<HttpResponse<Uint8Array>> {
+    const response = await this.perform(request);
+
+    if (response.status === 204) {
+      return {
+        status: response.status,
+        headers: response.headers,
+        data: new Uint8Array()
+      };
+    }
+
+    return {
+      status: response.status,
+      headers: response.headers,
+      data: new Uint8Array(await response.arrayBuffer())
+    };
+  }
+
+  private async perform(request: HttpRequest): Promise<Response> {
     const token = await this.getToken();
     const url = this.buildUrl(request.path, request.query);
 
@@ -187,36 +244,7 @@ export class AppStoreConnectClient {
       );
     }
 
-    if (response.status === 204) {
-      return {
-        status: response.status,
-        headers: response.headers,
-        data: undefined as T
-      };
-    }
-
-    const textBody = await response.text();
-
-    if (!textBody) {
-      return {
-        status: response.status,
-        headers: response.headers,
-        data: undefined as T
-      };
-    }
-
-    try {
-      return {
-        status: response.status,
-        headers: response.headers,
-        data: JSON.parse(textBody) as T
-      };
-    } catch (error) {
-      throw new InfrastructureError(
-        "Received invalid JSON from App Store Connect.",
-        error
-      );
-    }
+    return response;
   }
 
   public async getToken(): Promise<string> {

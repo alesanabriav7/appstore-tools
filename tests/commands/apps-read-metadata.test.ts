@@ -28,7 +28,14 @@ interface MockOptions {
     readonly supportUrl?: string;
     readonly marketingUrl?: string;
   }[];
-  readonly appInfos?: readonly { readonly id: string }[];
+  readonly appInfos?: readonly {
+    readonly id: string;
+    readonly appStoreState?: string;
+    readonly state?: string;
+    readonly linkedVersionId?: string;
+    readonly primaryCategoryId?: string;
+    readonly secondaryCategoryId?: string;
+  }[];
   readonly appInfoLocalizations?: readonly {
     readonly id: string;
     readonly locale: string;
@@ -39,6 +46,7 @@ interface MockOptions {
   readonly appInfoDetail?: {
     readonly primaryCategoryId?: string;
     readonly secondaryCategoryId?: string;
+    readonly omitAttributes?: boolean;
   };
 }
 
@@ -124,7 +132,39 @@ function createMockClient(options?: MockOptions): {
         return {
           status: 200,
           headers: new Headers(),
-          data: { data: appInfos.map((ai) => ({ id: ai.id, type: "appInfos" })) }
+          data: {
+            data: appInfos.map((ai) => ({
+              id: ai.id,
+              type: "appInfos",
+              attributes: {
+                ...(ai.appStoreState ? { appStoreState: ai.appStoreState } : {}),
+                ...(ai.state ? { state: ai.state } : {})
+              },
+              relationships: {
+                ...(ai.linkedVersionId
+                  ? {
+                      appStoreVersion: {
+                        data: { type: "appStoreVersions", id: ai.linkedVersionId }
+                      }
+                    }
+                  : {}),
+                ...(ai.primaryCategoryId
+                  ? {
+                      primaryCategory: {
+                        data: { type: "appCategories", id: ai.primaryCategoryId }
+                      }
+                    }
+                  : {}),
+                ...(ai.secondaryCategoryId
+                  ? {
+                      secondaryCategory: {
+                        data: { type: "appCategories", id: ai.secondaryCategoryId }
+                      }
+                    }
+                  : {})
+              }
+            }))
+          }
         } as HttpResponse<T>;
       }
 
@@ -133,19 +173,40 @@ function createMockClient(options?: MockOptions): {
         request.method === "GET" &&
         request.path.match(/\/v1\/appInfos\/[^/]+$/)
       ) {
+        const requestedId = request.path.split("/").pop();
+        const info = appInfos.find((item) => item.id === requestedId);
+        const primaryCategoryId = info?.primaryCategoryId ?? appInfoDetail.primaryCategoryId;
+        const secondaryCategoryId = info?.secondaryCategoryId ?? appInfoDetail.secondaryCategoryId;
+
         return {
           status: 200,
           headers: new Headers(),
           data: {
             data: {
-              id: appInfos[0]!.id,
-              attributes: {
-                primaryCategory: appInfoDetail.primaryCategoryId
-                  ? { id: appInfoDetail.primaryCategoryId }
-                  : undefined,
-                secondaryCategory: appInfoDetail.secondaryCategoryId
-                  ? { id: appInfoDetail.secondaryCategoryId }
-                  : undefined
+              id: info?.id ?? requestedId,
+              type: "appInfos",
+              ...(appInfoDetail.omitAttributes
+                ? {}
+                : {
+                    attributes: {
+                      ...(info?.appStoreState ? { appStoreState: info.appStoreState } : {})
+                    }
+                  }),
+              relationships: {
+                ...(primaryCategoryId
+                  ? {
+                      primaryCategory: {
+                        data: { type: "appCategories", id: primaryCategoryId }
+                      }
+                    }
+                  : {}),
+                ...(secondaryCategoryId
+                  ? {
+                      secondaryCategory: {
+                        data: { type: "appCategories", id: secondaryCategoryId }
+                      }
+                    }
+                  : {})
               }
             }
           }
@@ -416,5 +477,73 @@ describe("readMetadata", () => {
 
     expect(parsed["en-US"].description).toBe("Great app");
     expect(parsed["_app"].primaryCategory).toBe("FINANCE");
+  });
+
+  it("reads primaryCategory from the relationship when attributes is missing", async () => {
+    const { client, requests } = createMockClient({
+      appInfoDetail: { primaryCategoryId: "FINANCE", omitAttributes: true }
+    });
+    const out = outputPath("relationship-category.json");
+
+    const result = await readMetadata(client, {
+      appId: "app-1",
+      platform: "IOS",
+      version: "1.2.0",
+      outputPath: out
+    });
+
+    const detail = requests.find(
+      (request) => request.method === "GET" && request.path === "/v1/appInfos/appinfo-1"
+    );
+    expect(detail?.query?.include).toBe("primaryCategory,secondaryCategory");
+
+    const app = result.manifest["_app"] as Record<string, string>;
+    expect(app.primaryCategory).toBe("FINANCE");
+  });
+
+  it("reads categories from the editable appInfo linked to the selected version", async () => {
+    const { client, requests } = createMockClient({
+      versions: [
+        {
+          id: "version-edit",
+          versionString: "1.2.0",
+          appStoreState: "PREPARE_FOR_SUBMISSION",
+          platform: "IOS"
+        }
+      ],
+      appInfos: [
+        {
+          id: "appinfo-live",
+          appStoreState: "READY_FOR_SALE",
+          primaryCategoryId: "GAMES"
+        },
+        {
+          id: "appinfo-edit",
+          appStoreState: "PREPARE_FOR_SUBMISSION",
+          state: "PREPARE_FOR_SUBMISSION",
+          linkedVersionId: "version-edit",
+          primaryCategoryId: "FINANCE",
+          secondaryCategoryId: "PRODUCTIVITY"
+        }
+      ],
+      appInfoDetail: { omitAttributes: true }
+    });
+    const out = outputPath("editable-appinfo.json");
+
+    const result = await readMetadata(client, {
+      appId: "6759523370",
+      platform: "IOS",
+      version: "1.2.0",
+      outputPath: out
+    });
+
+    const detail = requests.find(
+      (request) => request.method === "GET" && /\/v1\/appInfos\/[^/]+$/.test(request.path)
+    );
+    expect(detail?.path).toBe("/v1/appInfos/appinfo-edit");
+
+    const app = result.manifest["_app"] as Record<string, string>;
+    expect(app.primaryCategory).toBe("FINANCE");
+    expect(app.secondaryCategory).toBe("PRODUCTIVITY");
   });
 });

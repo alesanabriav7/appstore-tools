@@ -7,6 +7,10 @@ import { config as loadDotenv } from "dotenv";
 import { AppStoreConnectClient, InfrastructureError } from "./api/client.js";
 import type { IpaSource } from "./ipa/artifact.js";
 import { resolveAscKeyIdFromEnvironment } from "./asc/key-id.js";
+import { analyticsFetchCommand } from "./commands/analytics-fetch.js";
+import { analyticsSetupCommand } from "./commands/analytics-setup.js";
+import { analyticsSummaryCommand } from "./commands/analytics-summary.js";
+import { appsCreateVersionCommand } from "./commands/apps-create-version.js";
 import { appsListCommand } from "./commands/apps-list.js";
 import { appsReadMetadataCommand } from "./commands/apps-read-metadata.js";
 import { appsUpdateMetadataCommand } from "./commands/apps-update-metadata.js";
@@ -14,6 +18,8 @@ import { buildsUploadCommand } from "./commands/builds-upload.js";
 import { certificatesCreateCommand } from "./commands/certificates-create.js";
 import { ipaExportOptionsCommand } from "./commands/ipa-export-options.js";
 import { ipaGenerateCommand } from "./commands/ipa-generate.js";
+import { ranksCheckCommand } from "./commands/ranks-check.js";
+import { salesFetchCommand } from "./commands/sales-fetch.js";
 
 // ---------------------------------------------------------------------------
 // Environment
@@ -128,12 +134,66 @@ export interface AppsUpdateMetadataCliCommand {
   readonly kind: "apps-update-metadata";
   readonly json: boolean;
   readonly apply: boolean;
+  readonly createVersion: boolean;
   readonly appReference: string;
   readonly metadataPath: string;
   readonly version?: string;
   readonly platform: "IOS" | "MAC_OS";
   readonly textOnly: boolean;
   readonly screenshotsOnly: boolean;
+}
+
+export interface AppsCreateVersionCliCommand {
+  readonly kind: "apps-create-version";
+  readonly json: boolean;
+  readonly apply: boolean;
+  readonly appReference: string;
+  readonly version: string;
+  readonly platform: "IOS" | "MAC_OS";
+}
+
+export interface AnalyticsSetupCliCommand {
+  readonly kind: "analytics-setup";
+  readonly json: boolean;
+  readonly apply: boolean;
+  readonly snapshot: boolean;
+  readonly appReference: string;
+}
+
+export interface AnalyticsFetchCliCommand {
+  readonly kind: "analytics-fetch";
+  readonly json: boolean;
+  readonly appReference: string;
+  readonly from: string;
+  readonly to: string;
+  readonly reports?: string;
+  readonly granularity: string;
+  readonly outDir: string;
+  readonly format: "jsonl" | "csv";
+}
+
+export interface AnalyticsSummaryCliCommand {
+  readonly kind: "analytics-summary";
+  readonly json: boolean;
+  readonly appReference: string;
+  readonly date?: string;
+  readonly inDir: string;
+}
+
+export interface SalesFetchCliCommand {
+  readonly kind: "sales-fetch";
+  readonly date: string;
+  readonly vendorNumber?: string;
+  readonly format: "csv" | "json";
+}
+
+export interface RanksCheckCliCommand {
+  readonly kind: "ranks-check";
+  readonly json: boolean;
+  readonly appReference: string;
+  readonly keywordsPath: string;
+  readonly countries: string;
+  readonly outPath?: string;
 }
 
 export interface AppsReadMetadataCliCommand {
@@ -163,6 +223,12 @@ export type CliCommand =
   | AppsListCliCommand
   | AppsReadMetadataCliCommand
   | AppsUpdateMetadataCliCommand
+  | AppsCreateVersionCliCommand
+  | AnalyticsSetupCliCommand
+  | AnalyticsFetchCliCommand
+  | AnalyticsSummaryCliCommand
+  | SalesFetchCliCommand
+  | RanksCheckCliCommand
   | IpaGenerateCliCommand
   | IpaExportOptionsCliCommand
   | BuildsUploadCliCommand
@@ -188,6 +254,36 @@ export function parseCliCommand(argv: readonly string[]): CliCommand {
   if (head === "apps" && next === "update-metadata") {
     const flags = parseFlags(rest);
     return parseAppsUpdateMetadataCommand(flags);
+  }
+
+  if (head === "apps" && next === "create-version") {
+    const flags = parseFlags(rest);
+    return parseAppsCreateVersionCommand(flags);
+  }
+
+  if (head === "analytics" && next === "setup") {
+    const flags = parseFlags(rest);
+    return parseAnalyticsSetupCommand(flags);
+  }
+
+  if (head === "analytics" && next === "fetch") {
+    const flags = parseFlags(rest);
+    return parseAnalyticsFetchCommand(flags);
+  }
+
+  if (head === "analytics" && next === "summary") {
+    const flags = parseFlags(rest);
+    return parseAnalyticsSummaryCommand(flags);
+  }
+
+  if (head === "sales" && next === "fetch") {
+    const flags = parseFlags(rest);
+    return parseSalesFetchCommand(flags);
+  }
+
+  if (head === "ranks" && next === "check") {
+    const flags = parseFlags(rest);
+    return parseRanksCheckCommand(flags);
   }
 
   if (head === "apps" && next === "read-metadata") {
@@ -311,9 +407,115 @@ function parseAppsUpdateMetadataCommand(flags: ParsedFlags): AppsUpdateMetadataC
     metadataPath,
     textOnly: flags.booleans.has("text-only"),
     screenshotsOnly: flags.booleans.has("screenshots-only"),
+    createVersion: flags.booleans.has("create-version"),
     ...(version ? { version } : {}),
     platform: platformRaw
   };
+}
+
+function parseAppsCreateVersionCommand(flags: ParsedFlags): AppsCreateVersionCliCommand {
+  return {
+    kind: "apps-create-version",
+    json: flags.booleans.has("json"),
+    apply: flags.booleans.has("apply"),
+    appReference: requireFlag(flags, "app"),
+    version: requireFlag(flags, "version"),
+    platform: parsePlatform(flags)
+  };
+}
+
+function parseAnalyticsSetupCommand(flags: ParsedFlags): AnalyticsSetupCliCommand {
+  return {
+    kind: "analytics-setup",
+    json: flags.booleans.has("json"),
+    apply: flags.booleans.has("apply"),
+    snapshot: flags.booleans.has("snapshot"),
+    appReference: requireFlag(flags, "app")
+  };
+}
+
+function parseAnalyticsFetchCommand(flags: ParsedFlags): AnalyticsFetchCliCommand {
+  const format = parseEnumFlag(flags, "format", ["jsonl", "csv"], "jsonl");
+  const granularity = normalizeOptionalFlag(flags.values.granularity) ?? "DAILY";
+  const reports = normalizeOptionalFlag(flags.values.reports);
+  const outDir = normalizeOptionalFlag(flags.values.out) ?? "data/";
+
+  return {
+    kind: "analytics-fetch",
+    json: flags.booleans.has("json"),
+    appReference: requireFlag(flags, "app"),
+    from: requireFlag(flags, "from"),
+    to: requireFlag(flags, "to"),
+    granularity,
+    outDir,
+    format,
+    ...(reports ? { reports } : {})
+  };
+}
+
+function parseAnalyticsSummaryCommand(flags: ParsedFlags): AnalyticsSummaryCliCommand {
+  const date = normalizeOptionalFlag(flags.values.date);
+  const inDir = normalizeOptionalFlag(flags.values.in) ?? "data/";
+
+  return {
+    kind: "analytics-summary",
+    json: flags.booleans.has("json"),
+    appReference: requireFlag(flags, "app"),
+    inDir,
+    ...(date ? { date } : {})
+  };
+}
+
+function parseSalesFetchCommand(flags: ParsedFlags): SalesFetchCliCommand {
+  const vendorNumber = normalizeOptionalFlag(flags.values.vendor);
+  const format = parseEnumFlag(flags, "format", ["csv", "json"], "csv");
+
+  return {
+    kind: "sales-fetch",
+    date: requireFlag(flags, "date"),
+    format,
+    ...(vendorNumber ? { vendorNumber } : {})
+  };
+}
+
+function parseRanksCheckCommand(flags: ParsedFlags): RanksCheckCliCommand {
+  const outPath = normalizeOptionalFlag(flags.values.out);
+
+  return {
+    kind: "ranks-check",
+    json: flags.booleans.has("json"),
+    appReference: requireFlag(flags, "app"),
+    keywordsPath: requireFlag(flags, "keywords"),
+    countries: requireFlag(flags, "country"),
+    ...(outPath ? { outPath } : {})
+  };
+}
+
+function parsePlatform(flags: ParsedFlags): "IOS" | "MAC_OS" {
+  const platformRaw = normalizeOptionalFlag(flags.values.platform) ?? "IOS";
+
+  if (platformRaw !== "IOS" && platformRaw !== "MAC_OS") {
+    throw new InfrastructureError("Invalid --platform. Allowed values: IOS, MAC_OS.");
+  }
+
+  return platformRaw;
+}
+
+function parseEnumFlag<T extends string>(
+  flags: ParsedFlags,
+  name: string,
+  allowed: readonly T[],
+  fallback: T
+): T {
+  const raw = normalizeOptionalFlag(flags.values[name]) ?? fallback;
+
+  if (!(allowed as readonly string[]).includes(raw)) {
+    throw new InfrastructureError(
+      `Invalid --${name}. Allowed values: ${allowed.join(", ")}.`
+    );
+  }
+
+  return raw as T;
 }
 
 function parseAppsReadMetadataCommand(flags: ParsedFlags): AppsReadMetadataCliCommand {
@@ -513,7 +715,13 @@ Usage:
   appstore-tools ipa generate [--output-ipa <path>] [xcodebuild/custom options] [--json]
   appstore-tools ipa export-options [--output-plist <path>] [--team-id <id>] [--signing-style <automatic|manual>] [--force] [--json]
   appstore-tools apps read-metadata --app <appId|bundleId> [--output <path>] [--version <x.y.z>] [--platform <IOS|MAC_OS>] [--json]
-  appstore-tools apps update-metadata --metadata <path> --app <appId|bundleId> [--version <x.y.z>] [--platform <IOS|MAC_OS>] [--text-only] [--screenshots-only] [--json] [--apply]
+  appstore-tools apps update-metadata --metadata <path> --app <appId|bundleId> [--version <x.y.z>] [--platform <IOS|MAC_OS>] [--text-only] [--screenshots-only] [--create-version] [--json] [--apply]
+  appstore-tools apps create-version --app <appId|bundleId> --version <x.y.z> [--platform <IOS|MAC_OS>] [--json] [--apply]
+  appstore-tools analytics setup --app <appId|bundleId> [--snapshot] [--json] [--apply]
+  appstore-tools analytics fetch --app <appId|bundleId> --from <YYYY-MM-DD> --to <YYYY-MM-DD> [--reports discovery,downloads,installs,sessions,crashes] [--granularity DAILY] [--out data/] [--format jsonl|csv] [--json]
+  appstore-tools analytics summary --app <appId|bundleId> [--date <YYYY-MM-DD>] [--in data/] [--json]
+  appstore-tools sales fetch --date <YYYY-MM-DD> [--vendor <number>] [--format csv|json]
+  appstore-tools ranks check --app <appId> --keywords <file> --country <co,us> [--out ranks.csv] [--json]
   appstore-tools builds upload [--app <appId|bundleId>] [--version <x.y.z>] [--build-number <n>] [--ipa <path> | generation options] [--wait-processing] [--json] [--apply]
   appstore-tools certificates create [--type <certificateType>] [--common-name <name>] [--output-dir <path>] [--keychain <path>] [--skip-install] [--json]
 
@@ -524,6 +732,10 @@ Required environment variables (App Store Connect API commands):
 
 Optional environment variables:
   ASC_BASE_URL (default: https://api.appstoreconnect.apple.com/)
+  ASC_VENDOR_NUMBER (vendor number for sales fetch when --vendor is omitted)
+
+Analytics report requests (analytics setup) require an Admin API key.
+ranks check calls the public iTunes Search API and does not use App Store Connect credentials.
 
 Required environment variables (xcodebuild archive signing):
   ASC_ISSUER_ID
@@ -587,6 +799,10 @@ async function handleCliCommand(
     return 0;
   }
 
+  if (command.kind === "ranks-check") {
+    return ranksCheckCommand(command);
+  }
+
   if (command.kind === "ipa-generate") {
     return ipaGenerateCommand(command);
   }
@@ -614,6 +830,38 @@ async function handleCliCommand(
 
   if (command.kind === "apps-update-metadata") {
     return appsUpdateMetadataCommand(client, command);
+  }
+
+  if (command.kind === "apps-create-version") {
+    return appsCreateVersionCommand(client, command);
+  }
+
+  if (command.kind === "analytics-setup") {
+    return analyticsSetupCommand(client, command);
+  }
+
+  if (command.kind === "analytics-fetch") {
+    return analyticsFetchCommand(client, command);
+  }
+
+  if (command.kind === "analytics-summary") {
+    return analyticsSummaryCommand(client, command);
+  }
+
+  if (command.kind === "sales-fetch") {
+    const vendorNumber = command.vendorNumber ?? env.ASC_VENDOR_NUMBER?.trim();
+
+    if (!vendorNumber) {
+      throw new InfrastructureError(
+        "Missing vendor number. Pass --vendor or set ASC_VENDOR_NUMBER."
+      );
+    }
+
+    return salesFetchCommand(client, {
+      date: command.date,
+      vendorNumber,
+      format: command.format
+    });
   }
 
   if (command.kind === "builds-upload") {
