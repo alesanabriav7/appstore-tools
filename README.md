@@ -227,6 +227,8 @@ npx appstore-tools apps read-metadata \
 
 The output file uses the same manifest format as `update-metadata`, so you can read, edit, and push back in one round-trip.
 
+Category ids are read from the `primaryCategory` and `secondaryCategory` relationships (`appInfos/{id}?include=primaryCategory,secondaryCategory`), not from attributes. When the selected version is editable, the command uses the same editable app info as `update-metadata` (the in-progress record, not the live one).
+
 ### Update metadata
 
 Update App Store listing text and screenshots from a JSON manifest.
@@ -263,6 +265,8 @@ npx appstore-tools apps update-metadata \
 - `--create-version` — when no editable version exists, create `--version` (`POST /v1/appStoreVersions`). Dry-run plans the create; `--apply` performs it.
 
 Name, subtitle, and privacy URL updates use the editable app info (`appStoreState` or `state` in `PREPARE_FOR_SUBMISSION`, `DEVELOPER_REJECTED`, `REJECTED`, `METADATA_REJECTED`, or `WAITING_FOR_REVIEW`), or the app info linked to the selected editable version. The command fails if none match, instead of writing the live App Store record.
+
+Dry-run lists a field-level diff (`field: current -> desired`) and omits fields that already match. `--apply` patches only the fields that differ, and skips the request when nothing changed.
 
 #### Manifest format
 

@@ -2,7 +2,14 @@ import { writeFile } from "node:fs/promises";
 
 import { DomainError, type AppStoreConnectClient } from "../api/client.js";
 import { listApps } from "./apps-list.js";
-import type { MetadataLocale, MetadataManifest } from "./apps-update-metadata.js";
+import {
+  EDITABLE_STATES,
+  selectEditableAppInfo,
+  type AppInfoCandidate,
+  type EditableVersion,
+  type MetadataLocale,
+  type MetadataManifest
+} from "./apps-update-metadata.js";
 
 // ---------------------------------------------------------------------------
 // API response types (inline)
@@ -36,23 +43,44 @@ interface VersionLocalizationsResponse {
   readonly data: readonly VersionLocalizationData[];
 }
 
-interface AppInfoData {
+interface CategoryLinkage {
+  readonly data?: {
+    readonly id?: string;
+    readonly type?: string;
+  } | null;
+}
+
+interface AppInfoResource {
   readonly id: string;
-  readonly attributes: {
+  readonly type?: string;
+  readonly attributes?: {
+    readonly appStoreState?: string;
+    readonly state?: string;
     readonly primaryCategory?: { readonly id?: string };
     readonly secondaryCategory?: { readonly id?: string };
+  };
+  readonly relationships?: {
+    readonly appStoreVersion?: {
+      readonly data?: {
+        readonly id?: string;
+        readonly type?: string;
+      };
+    };
+    readonly primaryCategory?: CategoryLinkage;
+    readonly secondaryCategory?: CategoryLinkage;
   };
 }
 
 interface AppInfosResponse {
-  readonly data: readonly {
-    readonly id: string;
-    readonly type: string;
-  }[];
+  readonly data: readonly AppInfoResource[];
 }
 
 interface AppInfoDetailResponse {
-  readonly data: AppInfoData;
+  readonly data?: AppInfoResource;
+  readonly included?: readonly {
+    readonly type?: string;
+    readonly id?: string;
+  }[];
 }
 
 interface AppInfoLocalizationData {
@@ -139,7 +167,9 @@ async function getAppInfos(
   const response = await client.request<AppInfosResponse>({
     method: "GET",
     path: `/v1/apps/${appId}/appInfos`,
-    query: { "fields[appInfos]": "primaryCategory,secondaryCategory" }
+    query: {
+      "fields[appInfos]": "appStoreState,state,primaryCategory,secondaryCategory"
+    }
   });
 
   return response.data;
@@ -153,7 +183,7 @@ async function getAppInfoDetail(
     method: "GET",
     path: `/v1/appInfos/${appInfoId}`,
     query: {
-      "fields[appInfos]": "primaryCategory,secondaryCategory",
+      "fields[appInfos]": "appStoreState,state,primaryCategory,secondaryCategory",
       include: "primaryCategory,secondaryCategory"
     }
   });
@@ -203,8 +233,8 @@ export async function readMetadata(
   // Use the first version returned (latest when no filter, exact match when filtered)
   const version = versionsResponse.data[0]!;
   const versionId = version.id;
-  const versionString = version.attributes.versionString ?? "";
-  const appStoreState = version.attributes.appStoreState ?? "";
+  const versionString = version.attributes?.versionString ?? "";
+  const appStoreState = version.attributes?.appStoreState ?? "";
 
   // 2. Fetch version localizations
   const versionLocs = await getVersionLocalizations(client, versionId);
@@ -216,7 +246,11 @@ export async function readMetadata(
     throw new DomainError("No appInfo found for this app.");
   }
 
-  const appInfoId = appInfosResponse.data[0]!.id;
+  const selectedAppInfo = selectAppInfoForRead(appInfosResponse.data, {
+    id: versionId,
+    appStoreState
+  });
+  const appInfoId = selectedAppInfo.id;
 
   // 4. Fetch appInfo localizations and detail in parallel
   const [appInfoLocs, appInfoDetail] = await Promise.all([
@@ -228,7 +262,7 @@ export async function readMetadata(
   const localeMap = new Map<string, Record<string, string>>();
 
   for (const loc of versionLocs.data) {
-    const locale = loc.attributes.locale;
+    const locale = loc.attributes?.locale;
     if (!locale) continue;
 
     const entry: Record<string, string> = {};
@@ -244,7 +278,7 @@ export async function readMetadata(
   }
 
   for (const loc of appInfoLocs.data) {
-    const locale = loc.attributes.locale;
+    const locale = loc.attributes?.locale;
     if (!locale) continue;
 
     const entry = localeMap.get(locale) ?? {};
@@ -265,9 +299,15 @@ export async function readMetadata(
     }
   }
 
-  // 7. Add _app block if we have category data
-  const primaryCategoryId = appInfoDetail.data.attributes.primaryCategory?.id;
-  const secondaryCategoryId = appInfoDetail.data.attributes.secondaryCategory?.id;
+  // 7. Categories are relationships. `attributes` is absent when the sparse
+  // fieldset only asks for primaryCategory/secondaryCategory.
+  const detailResource = appInfoDetail.data;
+  const primaryCategoryId =
+    categoryId(detailResource, "primaryCategory") ??
+    categoryId(selectedAppInfo, "primaryCategory");
+  const secondaryCategoryId =
+    categoryId(detailResource, "secondaryCategory") ??
+    categoryId(selectedAppInfo, "secondaryCategory");
 
   if (primaryCategoryId || secondaryCategoryId) {
     const appBlock: Record<string, string> = {};
@@ -287,6 +327,90 @@ export async function readMetadata(
     outputPath: input.outputPath,
     manifest: finalManifest
   };
+}
+
+function selectAppInfoForRead(
+  appInfos: readonly AppInfoResource[],
+  version: { readonly id: string; readonly appStoreState: string }
+): AppInfoResource {
+  const candidates = appInfos.map((resource) => toCandidate(resource));
+  const editableVersion: EditableVersion | null = EDITABLE_STATES.has(version.appStoreState)
+    ? {
+        id: version.id,
+        versionString: "",
+        appStoreState: version.appStoreState
+      }
+    : null;
+
+  let selected: AppInfoCandidate | undefined;
+
+  if (editableVersion) {
+    try {
+      selected = selectEditableAppInfo(candidates, editableVersion);
+    } catch (error) {
+      if (!(error instanceof DomainError)) {
+        throw error;
+      }
+    }
+  } else {
+    selected = candidates.find((info) =>
+      [info.appStoreState, info.state].includes(version.appStoreState)
+    );
+
+    if (!selected) {
+      try {
+        selected = selectEditableAppInfo(candidates, null);
+      } catch (error) {
+        if (!(error instanceof DomainError)) {
+          throw error;
+        }
+      }
+    }
+  }
+
+  const selectedId = selected?.id ?? appInfos[0]?.id;
+  const resource = appInfos.find((item) => item.id === selectedId);
+
+  if (!resource) {
+    throw new DomainError("No appInfo found for this app.");
+  }
+
+  return resource;
+}
+
+function toCandidate(resource: AppInfoResource): AppInfoCandidate {
+  const linkedVersionId = resource.relationships?.appStoreVersion?.data?.id;
+
+  return {
+    id: resource.id,
+    ...(resource.attributes?.appStoreState
+      ? { appStoreState: resource.attributes.appStoreState }
+      : {}),
+    ...(resource.attributes?.state ? { state: resource.attributes.state } : {}),
+    ...(linkedVersionId ? { linkedVersionId } : {})
+  };
+}
+
+/**
+ * Category ids live on relationships.primaryCategory.data.id (and the
+ * secondaryCategory relationship). Older payloads sometimes nested the same
+ * id under attributes; that shape is only a fallback.
+ */
+function categoryId(
+  resource: AppInfoResource | undefined,
+  name: "primaryCategory" | "secondaryCategory"
+): string | undefined {
+  if (!resource) {
+    return undefined;
+  }
+
+  const fromRelationship = resource.relationships?.[name]?.data?.id;
+
+  if (fromRelationship) {
+    return fromRelationship;
+  }
+
+  return resource.attributes?.[name]?.id;
 }
 
 // ---------------------------------------------------------------------------
