@@ -547,3 +547,7 @@ src/
   cli.ts             # CLI entry point
   index.ts           # Public API exports
 ```
+
+## Author
+
+Built by [Alejandro Sanabria](https://alejandrosanabria.com/) ([@alesanabriav](https://x.com/alesanabriav)).
